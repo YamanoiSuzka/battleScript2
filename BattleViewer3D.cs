@@ -2599,7 +2599,7 @@ namespace Yukar.Battle
         {
             // ビルボード敵の「呼吸」演出。
             // 生成時のbaseScaleを基準にして、横縮み/縦伸びを毎フレーム再設定する。
-            var breathingScale = GetMonsterBreathingScale(monster, viewerTimer);
+            var breathingScale = GetMonsterBreathingScale(monster, viewerTimer, catalog);
             actor.mapChr.setScale(
                 actor.baseScaleX * breathingScale.X,
                 actor.baseScaleY * breathingScale.Y,
