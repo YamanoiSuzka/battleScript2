@@ -75,6 +75,13 @@ namespace Yukar.Battle
         internal int frontDir = 1;
         private Queue<ActorState> stateQueue = new Queue<ActorState>();
 
+        // 生成時点のスケールを保持する。
+        // 戦闘中の伸縮演出はこの値を基準に毎フレーム再計算するため、
+        // setScaleを重ね掛けして徐々に大きく/小さくなる事故を防げる。
+        internal float baseScaleX = 1.0f;
+        internal float baseScaleY = 1.0f;
+        internal float baseScaleZ = 1.0f;
+
         private Dictionary<string, string> substitudeMotionDic = new Dictionary<string, string>()
         {
             {"command_wait", "battle_wait"},
@@ -179,12 +186,21 @@ namespace Yukar.Battle
                 mapChr.getModelInstance().setDisplayID(Common.Util.BATTLE3DDISPLAYID);
             }
             result.mapChr = mapChr;
+            result.StoreBaseScale();
             result.resetState(false, count, max);
 
             if (chr.Hero != null)
                 createWeaponModel(ref result, catalog, chr.Hero);
 
             return result;
+        }
+
+        internal void StoreBaseScale()
+        {
+            var scale = mapChr.getScale();
+            baseScaleX = scale.X;
+            baseScaleY = scale.Y;
+            baseScaleZ = scale.Z;
         }
 
         internal void resetState(bool isPlayer, int count, int max)

@@ -25,6 +25,17 @@ namespace Yukar.Battle
 
         protected float viewerTimer;
 
+        // 敵ビルボードの常時伸縮演出で使う基本値。
+        // speed は揺れの速さ、amount は元サイズに対する増減率。
+        protected const float MonsterBreathingSpeed = 1.8f;
+        protected const float MonsterBreathingAmount = 0.06f;
+
+        // HPがこの割合以下になったら、弱っている演出用の伸縮へ切り替える。
+        // 例: 0.20f = 残りHP20%。切り替えタイミングを変える場合はここを調整する。
+        protected const float MonsterBreathingWeakHitPointRate = 0.20f;
+        protected const float MonsterBreathingWeakSpeed = 0.75f;
+        protected const float MonsterBreathingWeakAmount = 0.025f;
+
         protected WindowType displayWindow;
 
         protected WindowDrawer windowDrawer;
@@ -1160,6 +1171,36 @@ namespace Yukar.Battle
             var distRect = new Rectangle((int)(pos.X - imageWidth / 2 * scale), (int)(pos.Y - imageHeight / 2 * scale), (int)(imageWidth * scale), (int)(imageHeight * scale));
 
             return distRect;
+        }
+
+        protected static Vector2 GetMonsterBreathingScale(BattleEnemyData monster, float timer)
+        {
+            // UniqueID から少し位相をずらし、複数の敵が完全に同期して伸縮しないようにする。
+            float phase = (monster.UniqueID % 8) * 0.35f;
+            GetMonsterBreathingParams(monster, out float speed, out float amount);
+
+            // timer は60FPS基準のカウントなので、秒相当に直してからsinへ渡す。
+            // Xは縮むときにYが伸びるよう、符号を反対にしている。
+            float s = (float)Math.Sin(timer / 60.0f * speed + phase);
+
+            return new Vector2(1.0f - s * amount, 1.0f + s * amount);
+        }
+
+        protected static void GetMonsterBreathingParams(BattleEnemyData monster, out float speed, out float amount)
+        {
+            speed = MonsterBreathingSpeed;
+            amount = MonsterBreathingAmount;
+
+            if (monster.MaxHitPoint <= 0)
+                return;
+
+            float hitPointRate = (float)monster.HitPoint / monster.MaxHitPoint;
+            if (hitPointRate > MonsterBreathingWeakHitPointRate)
+                return;
+
+            // 瀕死時は大きく揺らさず、ゆっくり小さめに伸縮させて弱っている印象にする。
+            speed = MonsterBreathingWeakSpeed;
+            amount = MonsterBreathingWeakAmount;
         }
 
         public static float GetMonsterDrawScale(BattleEnemyData monster, int enemyCount)
