@@ -2146,6 +2146,12 @@ namespace Yukar.Battle
                         continue;
                     }
 
+                    if (!info.damageFlashStarted && IsHitPointDamage(info))
+                    {
+                        actor.startDamageFlash();
+                        info.damageFlashStarted = true;
+                    }
+
                     var basePosition = actor.getScreenPos(p, v, MapScene.EffectPosType.Body);
 
                     // レイアウト側にダメージポジションの指定があればそこにポップする
@@ -2311,6 +2317,20 @@ namespace Yukar.Battle
                 }
 
                 damageTextList = damageTextList.Except(removeList);
+            }
+        }
+
+        private bool IsHitPointDamage(BattleDamageTextInfo info)
+        {
+            switch (info.type)
+            {
+                case BattleDamageTextInfo.TextType.HitPointDamage:
+                case BattleDamageTextInfo.TextType.CriticalDamage:
+                    return true;
+                case BattleDamageTextInfo.TextType.Damage:
+                    return info.statusId == catalog.getGameSettings().maxHPStatusID;
+                default:
+                    return false;
             }
         }
 
