@@ -46,6 +46,9 @@ namespace Yukar.Battle
         // このタグを持つスキルの実行後は、使用者が続けて行動する。
         // After executing a skill with this tag, the user acts again immediately.
         private const string CONSECUTIVE_ACTION_SKILL_TAG = "ctb_consecutive";
+        // このタグを持つスキルは、共通の発動演出を省略する。
+        // Skills with this tag skip the common activation presentation.
+        private const string SKIP_ACTIVATION_PRESENTATION_SKILL_TAG = "ctb_skip_activation";
 
         public class ExBattlePlayerData : BattlePlayerData
         {
@@ -6446,6 +6449,16 @@ namespace Yukar.Battle
             }
             else
             {
+                // 固有メッセージもスキル発動エフェクトもない場合は、共通の発動演出を省略する。
+                // Skip the common skill presentation when neither a custom message nor
+                // the common skill activation effect is configured.
+                if (!isActionDisabled && ShouldSkipSkillActivationPresentation())
+                {
+                    battleViewer.ClearDisplayMessage();
+                    ChangeBattleState(BattleState.ExecuteBattleCommand);
+                    return;
+                }
+
                 // コマンドに応じたアクションをアクターにとらせる
                 // Make actors take actions according to commands
                 activeCharacter.ExecuteCommandStart();
@@ -6459,6 +6472,20 @@ namespace Yukar.Battle
                     ChangeBattleState(BattleState.SetCommandMessageText);
                 }
             }
+        }
+
+        private bool ShouldSkipSkillActivationPresentation()
+        {
+            if (activeCharacter?.selectedBattleCommandType != BattleCommandType.Skill ||
+                activeCharacter.selectedSkill == null)
+            {
+                return false;
+            }
+
+            if (HasSkillTag(activeCharacter.selectedSkill, SKIP_ACTIVATION_PRESENTATION_SKILL_TAG))
+                return true;
+
+            return false;
         }
 
         private void UpdateBattleState_DisplayStatusMessage()
