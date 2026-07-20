@@ -43,6 +43,10 @@ namespace Yukar.Battle
     /// </summary>
     public class BattleSequenceManager : BattleSequenceManagerBase
     {
+        // このタグを持つスキルの実行後は、使用者が続けて行動する。
+        // After executing a skill with this tag, the user acts again immediately.
+        private const string CONSECUTIVE_ACTION_SKILL_TAG = "ctb_consecutive";
+
         public class ExBattlePlayerData : BattlePlayerData
         {
             public ExBattlePlayerData()
@@ -236,6 +240,7 @@ namespace Yukar.Battle
         private float elapsedTimeForBattleStart;
         private string battleStartWord;
         private int totalTurn;
+        private BattleCharacterBase consecutiveActionCharacter;
         private int itemRate;
         private int moneyRate;
         private Guid waitForCommon;
@@ -4955,6 +4960,25 @@ namespace Yukar.Battle
         /// </summary>
         private void UpdateBattleState_WaitCtbGauge()
         {
+            // 連続行動は、ほかのキャラクターのゲージ量にかかわらず最優先する。
+            // Consecutive actions take priority regardless of the other gauges.
+            if (consecutiveActionCharacter != null)
+            {
+                var character = consecutiveActionCharacter;
+                consecutiveActionCharacter = null;
+
+                if (!character.IsDeadCondition())
+                {
+                    activeCharacter = character;
+                    commandSelectPlayer = character as ExBattlePlayerData;
+                    ChangeBattleState(BattleState.PlayerTurnStart);
+                    battleEvents.start(Rom.Script.Trigger.BATTLE_TURN);
+                    character.InitializeBattleCommandDisabled(catalog);
+                    character.CurrentDamageEquipmentIndex = 0;
+                    return;
+                }
+            }
+
             // 即時行動がセットされていたら強制的にターン発動
             // If immediate action is set, the turn will be forced.
             if (battleEntryCharacters.Count > 0)
@@ -5844,6 +5868,10 @@ namespace Yukar.Battle
 					activeCharacter.lastHitCheckResult = BattleCharacterBase.HitCheckResult.NONE;
 
 					PaySkillCost(activeCharacter, skill);
+                    if (HasSkillTag(skill, CONSECUTIVE_ACTION_SKILL_TAG))
+                    {
+                        consecutiveActionCharacter = activeCharacter;
+                    }
                     EffectSkill(activeCharacter, skill, friendEffectTargets.ToArray(), enemyEffectTargets.ToArray(), damageTextList, recoveryStatusInfo,
                         out friendEffectedCharacters, out enemyEffectedCharacters, out reflections, true);
 
@@ -7491,11 +7519,27 @@ namespace Yukar.Battle
         {
             if (chr != null)
             {
+                // 連続行動が予約されている場合は、次の行動のためにゲージを消費しない。
+                // Keep the gauge full while a consecutive action is pending.
+                if (chr == consecutiveActionCharacter)
+                    return;
+
                 if(chr is ExBattlePlayerData exp && exp.turnGauge >= 1)
                     exp.turnGauge -= 1;
                 else if (chr is ExBattleEnemyData exe && exe.turnGauge >= 1)
                     exe.turnGauge -= 1;
             }
+        }
+
+        private static bool HasSkillTag(Rom.NSkill skill, string tag)
+        {
+            if (skill == null || string.IsNullOrWhiteSpace(skill.tags))
+                return false;
+
+            var separators = new[] { ' ', '\t', '\r', '\n', ',', ';' };
+            return skill.tags.Split(separators, StringSplitOptions.RemoveEmptyEntries)
+                .Select(x => x.TrimStart('#', '＃'))
+                .Any(x => string.Equals(x, tag, StringComparison.OrdinalIgnoreCase));
         }
 
         private void UpdateBattleState_PlayerChallengeEscape()
