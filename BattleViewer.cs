@@ -2,7 +2,9 @@
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
+using System.Text.RegularExpressions;
 
 using Microsoft.Xna.Framework;
 
@@ -24,6 +26,19 @@ namespace Yukar.Battle
         public GameMain game { get; set; }
 
         protected float viewerTimer;
+
+        // 敵ビルボードの常時伸縮演出で使う基本値。
+        // speed は揺れの速さ、amount は元サイズに対する増減率。
+        protected const float MonsterBreathingSpeed = 1.8f;
+        protected const float MonsterBreathingAmount = 0.06f;
+
+        // HPがこの割合以下になったら、弱っている演出用の伸縮へ切り替える。
+        // 例: 0.20f = 残りHP20%。切り替えタイミングを変える場合はここを調整する。
+        protected const float MonsterBreathingWeakHitPointRate = 0.20f;
+        protected const float MonsterBreathingWeakSpeed = 0.75f;
+        protected const float MonsterBreathingWeakAmount = 0.025f;
+        protected const float MonsterBreathingWeakSpeedRate = MonsterBreathingWeakSpeed / MonsterBreathingSpeed;
+        protected const float MonsterBreathingWeakAmountRate = MonsterBreathingWeakAmount / MonsterBreathingAmount;
 
         protected WindowType displayWindow;
 
@@ -1160,6 +1175,75 @@ namespace Yukar.Battle
             var distRect = new Rectangle((int)(pos.X - imageWidth / 2 * scale), (int)(pos.Y - imageHeight / 2 * scale), (int)(imageWidth * scale), (int)(imageHeight * scale));
 
             return distRect;
+        }
+
+        protected static Vector2 GetMonsterBreathingScale(BattleEnemyData monster, float timer, Catalog catalog)
+        {
+            // UniqueID から少し位相をずらし、複数の敵が完全に同期して伸縮しないようにする。
+            float phase = (monster.UniqueID % 8) * 0.35f;
+            GetMonsterBreathingParams(monster, catalog, out float speed, out float amount);
+
+            // timer は60FPS基準のカウントなので、秒相当に直してからsinへ渡す。
+            // Xは縮むときにYが伸びるよう、符号を反対にしている。
+            float s = (float)Math.Sin(timer / 60.0f * speed + phase);
+
+            return new Vector2(1.0f - s * amount, 1.0f + s * amount);
+        }
+
+        protected static void GetMonsterBreathingParams(BattleEnemyData monster, Catalog catalog, out float speed, out float amount)
+        {
+            speed = MonsterBreathingSpeed;
+            amount = MonsterBreathingAmount;
+
+            ApplyMonsterBreathingTags(monster, catalog, ref speed, ref amount);
+
+            if (monster.MaxHitPoint > 0) {
+                float hitPointRate = (float)monster.HitPoint / monster.MaxHitPoint;
+                if (hitPointRate <= MonsterBreathingWeakHitPointRate) {
+                    // 瀕死時は大きく揺らさず、ゆっくり小さめに伸縮させて弱っている印象にする。
+                    speed *= MonsterBreathingWeakSpeedRate;
+                    amount *= MonsterBreathingWeakAmountRate;
+                }
+            }
+        }
+
+        protected static void ApplyMonsterBreathingTags(BattleEnemyData monster, Catalog catalog, ref float speed, ref float amount) {
+            // データベースからタグを取得してパラメータに適用する
+            string tags = GetMonsterTags(monster, catalog);
+            if(string.IsNullOrEmpty(tags))
+                return;
+            
+            // 管理タグ+メモに "amount:0.03, speed:2f" のように書くと、敵ごとに上書きできる。
+            foreach (Match match in Regex.Matches(tags, @"(?<key>amount|speed)\s*[:=]\s*(?<value>[+-]?\d+(?:\.\d+)?)(?:f)?", RegexOptions.IgnoreCase))
+            {
+                if (!float.TryParse(match.Groups["value"].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out float value))
+                    continue;
+
+                switch (match.Groups["key"].Value.ToLowerInvariant())
+                {
+                    case "amount":
+                        amount = value;
+                        break;
+
+                    case "speed":
+                        speed = value;
+                        break;
+                }
+            }
+        }
+
+        protected static string GetMonsterTags(BattleEnemyData monster, Catalog catalog) 
+        {
+            if (monster?.monster == null)
+                return "";
+
+            var cast = catalog?.getItemFromGuid<Rom.Cast>(monster.monster.guId);
+            if (cast == null && !string.IsNullOrEmpty(monster.monster.name))
+            {
+                cast = catalog?.getItemFromName<Rom.Cast>(monster.monster.name);
+            }
+
+            return cast?.tags ?? monster.monster.tags ?? "";
         }
 
         public static float GetMonsterDrawScale(BattleEnemyData monster, int enemyCount)

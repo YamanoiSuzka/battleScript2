@@ -75,6 +75,13 @@ namespace Yukar.Battle
         internal int frontDir = 1;
         private Queue<ActorState> stateQueue = new Queue<ActorState>();
 
+        // 生成時点のスケールを保持する。
+        // 戦闘中の伸縮演出はこの値を基準に毎フレーム再計算するため、
+        // setScaleを重ね掛けして徐々に大きく/小さくなる事故を防げる。
+        internal float baseScaleX = 1.0f;
+        internal float baseScaleY = 1.0f;
+        internal float baseScaleZ = 1.0f;
+
         private Dictionary<string, string> substitudeMotionDic = new Dictionary<string, string>()
         {
             {"command_wait", "battle_wait"},
@@ -102,6 +109,8 @@ namespace Yukar.Battle
         public static readonly string[] L_ARM_NODE_NAMES = { "L_itemhook", "hook_L_hand" };
 
         private float stateCount = 0;
+        private const float DAMAGE_FLASH_DURATION = 8.0f;
+        private float damageFlashTimer = 0;
         internal const float ESCAPE_MAX_COUNT = 20;
         public static Common.GameData.Party party;
         internal Microsoft.Xna.Framework.Color? overRidedColor;
@@ -179,12 +188,21 @@ namespace Yukar.Battle
                 mapChr.getModelInstance().setDisplayID(Common.Util.BATTLE3DDISPLAYID);
             }
             result.mapChr = mapChr;
+            result.StoreBaseScale();
             result.resetState(false, count, max);
 
             if (chr.Hero != null)
                 createWeaponModel(ref result, catalog, chr.Hero);
 
             return result;
+        }
+
+        internal void StoreBaseScale()
+        {
+            var scale = mapChr.getScale();
+            baseScaleX = scale.X;
+            baseScaleY = scale.Y;
+            baseScaleZ = scale.Z;
         }
 
         internal void resetState(bool isPlayer, int count, int max)
@@ -357,6 +375,11 @@ namespace Yukar.Battle
         internal void Update(MapData drawer, float yangle, bool isLockDirection)
         {
             mapChr.Update(drawer, yangle, isLockDirection);
+
+            // 被弾時の点滅時間
+            if (damageFlashTimer > 0) {
+                damageFlashTimer = Math.Max(0, damageFlashTimer - GameMain.getRelativeParam60FPS());
+            }
 
             // 物理実装以降、自動で高さを合わせてくれなくなったので、自前で生成してやる
             // After the physical implementation, the height is no longer adjusted automatically, so I will generate it myself
@@ -878,8 +901,22 @@ namespace Yukar.Battle
 
         internal void setColor(Microsoft.Xna.Framework.Color color)
         {
-            if (state.type != ActorStateType.ESCAPE)
+            if (state.type != ActorStateType.ESCAPE) {
+                if (damageFlashTimer > 0)
+                {
+                    // 元の状態異常色やエフェクト色を残しながら、被弾した瞬間だけ赤を強くする。
+                    color.R = 255;
+                    color.G = (byte)(color.G * 0.25f);
+                    color.B = (byte)(color.B * 0.25f);
+                }
+
                 mapChr.ChangeColor(color.R, color.G, color.B, color.A);
+            }
+        }
+
+        internal void startDamageFlash()
+        {
+            damageFlashTimer = DAMAGE_FLASH_DURATION;
         }
 
         private void setOpacityMultiplier()

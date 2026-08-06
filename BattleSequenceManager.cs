@@ -43,6 +43,20 @@ namespace Yukar.Battle
     /// </summary>
     public class BattleSequenceManager : BattleSequenceManagerBase
     {
+        // このタグを持つスキルの実行後は、使用者が続けて行動する。
+        // After executing a skill with this tag, the user acts again immediately.
+        private const string CONSECUTIVE_ACTION_SKILL_TAG = "ctb_consecutive";
+        // このタグを持つスキルは、共通の発動演出を省略する。
+        // Skills with this tag skip the common activation presentation.
+        private const string SKIP_ACTIVATION_PRESENTATION_SKILL_TAG = "ctb_skip_activation";
+        // このタグを持つスキルは、命中した対象のCTBゲージを後退させる。
+        // Skills with this tag push back the CTB gauge of affected targets.
+        private const string CTB_STUN_SKILL_TAG = "ctb_stun";
+        // このタグを持つ状態は、CTBスタンを受けた時に解除する。
+        // Conditions with this tag are removed when CTB stun is applied.
+        private const string CTB_STUN_CANCEL_CONDITION_TAG = "ctb_stun_cancel";
+        private const float CTB_STUN_GAUGE_PENALTY = 1.0f;
+
         public class ExBattlePlayerData : BattlePlayerData
         {
             public ExBattlePlayerData()
@@ -236,6 +250,8 @@ namespace Yukar.Battle
         private float elapsedTimeForBattleStart;
         private string battleStartWord;
         private int totalTurn;
+        private BattleCharacterBase consecutiveActionCharacter;
+        private readonly HashSet<BattleCharacterBase> ctbStunImmuneCharacters = new HashSet<BattleCharacterBase>();
         private int itemRate;
         private int moneyRate;
         private Guid waitForCommon;
@@ -4381,6 +4397,11 @@ namespace Yukar.Battle
             if (battleEvents.isBusy())
                 return;
 
+            // 一度行動機会を迎えたら、CTBスタン耐性を解除する。
+            // Stun immunity lasts until the target's next action opportunity.
+            if (activeCharacter != null)
+                ctbStunImmuneCharacters.Remove(activeCharacter);
+
             recoveryStatusInfo.Clear();
 
             if (activeCharacter != null)
@@ -4982,6 +5003,25 @@ namespace Yukar.Battle
         /// </summary>
         private void UpdateBattleState_WaitCtbGauge()
         {
+            // 連続行動は、ほかのキャラクターのゲージ量にかかわらず最優先する。
+            // Consecutive actions take priority regardless of the other gauges.
+            if (consecutiveActionCharacter != null)
+            {
+                var character = consecutiveActionCharacter;
+                consecutiveActionCharacter = null;
+
+                if (!character.IsDeadCondition())
+                {
+                    activeCharacter = character;
+                    commandSelectPlayer = character as ExBattlePlayerData;
+                    ChangeBattleState(BattleState.PlayerTurnStart);
+                    battleEvents.start(Rom.Script.Trigger.BATTLE_TURN);
+                    character.InitializeBattleCommandDisabled(catalog);
+                    character.CurrentDamageEquipmentIndex = 0;
+                    return;
+                }
+            }
+
             // 即時行動がセットされていたら強制的にターン発動
             // If immediate action is set, the turn will be forced.
             if (battleEntryCharacters.Count > 0)
@@ -5881,8 +5921,17 @@ namespace Yukar.Battle
 					activeCharacter.lastHitCheckResult = BattleCharacterBase.HitCheckResult.NONE;
 
 					PaySkillCost(activeCharacter, skill);
+                    if (HasSkillTag(skill, CONSECUTIVE_ACTION_SKILL_TAG))
+                    {
+                        consecutiveActionCharacter = activeCharacter;
+                    }
                     EffectSkill(activeCharacter, skill, friendEffectTargets.ToArray(), enemyEffectTargets.ToArray(), damageTextList, recoveryStatusInfo,
                         out friendEffectedCharacters, out enemyEffectedCharacters, out reflections, true);
+
+                    if (HasSkillTag(skill, CTB_STUN_SKILL_TAG))
+                    {
+                        ApplyCtbStun(friendEffectedCharacters.Concat(enemyEffectedCharacters));
+                    }
 
                     battleEvents.setLastSkillTargetIndex(activeCharacter.targetCharacter);
 
@@ -6462,6 +6511,16 @@ namespace Yukar.Battle
             }
             else
             {
+                // 固有メッセージもスキル発動エフェクトもない場合は、共通の発動演出を省略する。
+                // Skip the common skill presentation when neither a custom message nor
+                // the common skill activation effect is configured.
+                if (!isActionDisabled && ShouldSkipSkillActivationPresentation())
+                {
+                    battleViewer.ClearDisplayMessage();
+                    ChangeBattleState(BattleState.ExecuteBattleCommand);
+                    return;
+                }
+
                 // コマンドに応じたアクションをアクターにとらせる
                 // Make actors take actions according to commands
                 activeCharacter.ExecuteCommandStart();
@@ -6475,6 +6534,20 @@ namespace Yukar.Battle
                     ChangeBattleState(BattleState.SetCommandMessageText);
                 }
             }
+        }
+
+        private bool ShouldSkipSkillActivationPresentation()
+        {
+            if (activeCharacter?.selectedBattleCommandType != BattleCommandType.Skill ||
+                activeCharacter.selectedSkill == null)
+            {
+                return false;
+            }
+
+            if (HasSkillTag(activeCharacter.selectedSkill, SKIP_ACTIVATION_PRESENTATION_SKILL_TAG))
+                return true;
+
+            return false;
         }
 
         private void UpdateBattleState_DisplayStatusMessage()
@@ -7581,10 +7654,63 @@ namespace Yukar.Battle
         {
             if (chr != null)
             {
+                // 連続行動が予約されている場合は、次の行動のためにゲージを消費しない。
+                // Keep the gauge full while a consecutive action is pending.
+                if (chr == consecutiveActionCharacter)
+                    return;
+
                 if(chr is ExBattlePlayerData exp && exp.turnGauge >= 1)
                     exp.turnGauge -= 1;
                 else if (chr is ExBattleEnemyData exe && exe.turnGauge >= 1)
                     exe.turnGauge -= 1;
+            }
+        }
+
+        private static bool HasSkillTag(Rom.NSkill skill, string tag)
+        {
+            if (skill == null || string.IsNullOrWhiteSpace(skill.tags))
+                return false;
+
+            return HasTag(skill.tags, tag);
+        }
+
+        private static bool HasTag(string tags, string tag)
+        {
+            if (string.IsNullOrWhiteSpace(tags))
+                return false;
+
+            var separators = new[] { ' ', '\t', '\r', '\n', ',', ';' };
+            return tags.Split(separators, StringSplitOptions.RemoveEmptyEntries)
+                .Select(x => x.TrimStart('#', '＃'))
+                .Any(x => string.Equals(x, tag, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private void ApplyCtbStun(IEnumerable<BattleCharacterBase> targets)
+        {
+            foreach (var target in targets.Where(x => x != null).Distinct())
+            {
+                if (target.IsDeadCondition() || ctbStunImmuneCharacters.Contains(target))
+                    continue;
+
+                if (target is ExBattlePlayerData player)
+                    player.turnGauge = Math.Max(0, player.turnGauge - CTB_STUN_GAUGE_PENALTY);
+                else if (target is ExBattleEnemyData enemy)
+                    enemy.turnGauge = Math.Max(0, enemy.turnGauge - CTB_STUN_GAUGE_PENALTY);
+                else
+                    continue;
+
+                ctbStunImmuneCharacters.Add(target);
+
+                // RecoveryConditionは辞書を変更するため、解除対象を先に配列化する。
+                // RecoveryCondition mutates the dictionary, so snapshot the targets first.
+                var conditionsToCancel = target.conditionInfoDic.Values
+                    .Where(x => x.rom != null && HasTag(x.rom.tags, CTB_STUN_CANCEL_CONDITION_TAG))
+                    .ToArray();
+
+                foreach (var conditionInfo in conditionsToCancel)
+                {
+                    target.RecoveryCondition(conditionInfo.condition, battleEvents, Rom.Condition.RecoveryType.Invalidate);
+                }
             }
         }
 

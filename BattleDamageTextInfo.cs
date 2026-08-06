@@ -85,5 +85,6 @@ namespace Yukar.Battle
         public bool IsNumberOnlyText;
         public readonly BattleCharacterBase targetCharacter;
         public int id = -1;// 重なっているときにずらすための目安 / Guidelines for shifting when they overlap
+        public bool damageFlashStarted;
     }
 }

@@ -2146,6 +2146,12 @@ namespace Yukar.Battle
                         continue;
                     }
 
+                    if (!info.damageFlashStarted && IsHitPointDamage(info))
+                    {
+                        actor.startDamageFlash();
+                        info.damageFlashStarted = true;
+                    }
+
                     var basePosition = actor.getScreenPos(p, v, MapScene.EffectPosType.Body);
 
                     // レイアウト側にダメージポジションの指定があればそこにポップする
@@ -2311,6 +2317,20 @@ namespace Yukar.Battle
                 }
 
                 damageTextList = damageTextList.Except(removeList);
+            }
+        }
+
+        private bool IsHitPointDamage(BattleDamageTextInfo info)
+        {
+            switch (info.type)
+            {
+                case BattleDamageTextInfo.TextType.HitPointDamage:
+                case BattleDamageTextInfo.TextType.CriticalDamage:
+                    return true;
+                case BattleDamageTextInfo.TextType.Damage:
+                    return info.statusId == catalog.getGameSettings().maxHPStatusID;
+                default:
+                    return false;
             }
         }
 
@@ -2565,12 +2585,25 @@ namespace Yukar.Battle
                 if (actor == null)
                     continue;
 
+                // 常時演出のスケール変更は、状態異常モーション更新とは独立して毎フレーム適用する。
+                ApplyMonsterBreathingScale(enemyMonsterData[i], actor);
                 updateConditionEffectAndMotion(actor);
 
                 //actor.mapChr.setDirectionFromRadian(enemyMonsterData[i].directionRad);
             }
 
             oldState = owner.battleState;
+        }
+
+        private void ApplyMonsterBreathingScale(BattleEnemyData monster, BattleActor actor)
+        {
+            // ビルボード敵の「呼吸」演出。
+            // 生成時のbaseScaleを基準にして、横縮み/縦伸びを毎フレーム再設定する。
+            var breathingScale = GetMonsterBreathingScale(monster, viewerTimer, catalog);
+            actor.mapChr.setScale(
+                actor.baseScaleX * breathingScale.X,
+                actor.baseScaleY * breathingScale.Y,
+                actor.baseScaleZ);
         }
 
         internal void setEnemyActionReady(BattleEnemyData monsterData)
