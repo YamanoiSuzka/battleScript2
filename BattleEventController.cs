@@ -23,7 +23,7 @@ namespace Yukar.Battle
 		internal Queue<MemberChangeData> MemberChangeQueue { get => memberChangeQueue; }
 
         // BTL_APPEARで生存中に消去したモンスターの元配置を UniqueID→moveTargetPos で保持する
-        // Maintain the original location of monsters deleted while alive with BTL_APPEAR using UniqueID→moveTargetPos
+        // Retain the original location of monsters deleted while alive with BTL_APPEAR with UniqueID → moveTargetPos
         // (消去後は enemyData / defeatedEnemyData のどちらにも残らないため別途保存)
         // (After deletion, it will not remain in either enemyData / defeatedEnemyData, so save it separately)
         Dictionary<int, Vector3> savedSlotPositions = new Dictionary<int, Vector3>();
@@ -99,7 +99,7 @@ namespace Yukar.Battle
             this.mapEngine = mapEngine;
 
             // バトル開始時のパーティ情報を記録する（レイアウト再生成時に上書きされないよう）
-            // Record party information at the start of the battle (so that it is not overwritten when regenerating the layout)
+            // Record party information at the start of the battle (so it will not be overwritten when regenerating the layout)
             originalBattleParty = playerData.ToList();
             originalReserves = GameMain.instance.data.party.Reserves.ToList();
 
@@ -738,7 +738,10 @@ namespace Yukar.Battle
                         {
                             // boolが入っている場合はそのままフラグとして解釈
                             // If bool is included, it is interpreted as a flag.
-                            skipMessage = curCommand.attrList[cur++].GetBool();
+                            if (curCommand.attrList.Count > cur)
+                            {
+                                skipMessage = curCommand.attrList[cur++].GetBool();
+                            }
                         }
                         else
                         {
@@ -948,7 +951,7 @@ namespace Yukar.Battle
             // 座標指定がなく元スロットの位置情報がある場合は引き継ぐ
             // If coordinates are not specified and there is position information of the original slot, it will be inherited.
             // (カスタムレイアウト・デフォルトレイアウト・生存中消去いずれも対応)
-            // (Supports custom layout, default layout, and deletion while alive)
+            // (Custom layout, default layout, and deletion while alive are all supported)
             if (entry.layout == null && inheritedPosition.HasValue)
             {
                 data.pos = inheritedPosition.Value;
@@ -1541,7 +1544,7 @@ namespace Yukar.Battle
             // 名前が空の変数を読み出して生成してしまう（HP操作と並行した「空の変数への代入」の原因）。
             // A variable with an empty name is read and generated (causing \
             // Guid指定時は idx を使用しないため、変数参照を行わない。
-            // When specifying Guid, idx is not used, so variables are not referenced.
+            // When specifying a Guid, idx is not used, so variables are not referenced.
             var idx = (targetAttr is Script.GuidAttr) ? 0 : (int)ScriptRunner.GetNumOrVariable(owner, evGuid, targetAttr, false);
             Guid statusId;
             var gs = catalog.getGameSettings();
@@ -2654,8 +2657,8 @@ namespace Yukar.Battle
             // Apply if graphics change
             foreach (var friend in viewer.friends)
             {
-                if (friend == null)
-                    break;
+                if (friend?.mapChr == null)
+                    continue;
 
                 var pl = friend.source as BattlePlayerData;
                 if (pl?.player?.rom == null) continue;
@@ -3105,7 +3108,7 @@ namespace Yukar.Battle
                 case BattleCommandType.Skip:
                     // パーティの逃げるコマンド選択は常に一人目のメンバーにセットされるので、それも考慮する
                     // The party's escape command selection is always set to the first member, so consider that as well.
-                    if (battle.playerData.Contains(active) && battle.playerData[0].selectedBattleCommandType == BattleCommandType.PlayerEscape)
+                    if (battle.playerData.Contains(active) && battle.playerData.Count > 0 && battle.playerData[0].selectedBattleCommandType == BattleCommandType.PlayerEscape)
                         return 6;
 
                     return 3;

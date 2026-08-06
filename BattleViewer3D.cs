@@ -1477,7 +1477,7 @@ namespace Yukar.Battle
         {
             var skillSource = skillUser;
             if (skillSource == null)
-                skillSource = friends[0];
+                skillSource = friends.FirstOrDefault(x => x != null);
 
             effectDrawTargetMonsterList.Sort((a, b) =>
             {
@@ -2584,13 +2584,22 @@ namespace Yukar.Battle
 
         private void updateConditionEffectAndMotion(BattleActor actor)
         {
+            if (actor?.source == null || actor.mapChr == null)
+                return;
+
+            var conditionInfos = actor.source.conditionInfoDic?.Values?
+                .Where(x => x != null)
+                .ToArray();
+            if (conditionInfos == null)
+                conditionInfos = Array.Empty<Yukar.Common.GameData.Hero.ConditionInfo>();
+
             // 行動不能時のモーションを設定する
             // Set motion when incapacitated
             var actionDisabledConditionMotion = "";
             var highestPriority = 0;
-            foreach (var e in actor.source.conditionInfoDic)
+            foreach (var info in conditionInfos)
             {
-                var condition = e.Value.rom;
+                var condition = info.rom;
                 if ((condition != null) && !string.IsNullOrEmpty(condition.motion))
                 {
                     if (condition.IsActionDisabled && highestPriority < condition.Priority)
@@ -2603,8 +2612,10 @@ namespace Yukar.Battle
 
             // 状態異常エフェクトを同期
             // Synchronize status effects
-            var removedList = actor.mapChr.ConditionEffectDrawerDic.Keys.Where(x => !actor.source.conditionInfoDic.ContainsKey(x.guId));
-            var assignedList = actor.source.conditionInfoDic.Values.Where(x => !actor.mapChr.ConditionEffectDrawerDic.ContainsKey(x.rom));
+            var conditionIds = new HashSet<Guid>(conditionInfos.Select(x => x.condition));
+            var conditionRoms = new HashSet<Common.Rom.Condition>(conditionInfos.Select(x => x.rom).Where(x => x != null));
+            var removedList = actor.mapChr.ConditionEffectDrawerDic.Keys.Where(x => x != null && !conditionIds.Contains(x.guId));
+            var assignedList = conditionRoms.Where(x => !actor.mapChr.ConditionEffectDrawerDic.ContainsKey(x));
             foreach (var removed in removedList.ToArray())
             {
                 actor.mapChr.removeEffectDrawer(removed);
@@ -2618,7 +2629,7 @@ namespace Yukar.Battle
                 owner.battleState != BattleState.DisplayCommandEffect)
             {
                 foreach (var assigned in assignedList.ToArray())
-                    actor.mapChr.addEffectDrawer(assigned.rom);
+                    actor.mapChr.addEffectDrawer(assigned);
             }
 
             // 行動不能
@@ -2664,7 +2675,7 @@ namespace Yukar.Battle
         /// <param name="inTime"></param>
         public void restoreCamera(float inTime = 0)
         {
-            skillUser = friends[0];
+            skillUser = friends.FirstOrDefault(x => x != null);
 
             PlayCameraAnimation(Rom.Camera.NAME_BATTLE_WAIT);
         }
@@ -3730,7 +3741,7 @@ namespace Yukar.Battle
                 {
                     foreach (var item in chr.conditionInfoDic)
                     {
-                        chr.mapChr.addEffectDrawer(item.Value.rom);
+                        chr.mapChr.addEffectDrawer(item.Value?.rom);
                     }
                 }
             }

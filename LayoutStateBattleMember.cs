@@ -568,7 +568,7 @@ namespace Yukar.Battle
             }
             if (canAddReserve && memberProperties.Count > 0 &&
                 memberProperties[0].GroupInfomation == MemberProperty.Group.PARTY &&
-                (AliveMemberCount > 1 || (memberProperties[0].Hero?.IsDeadCondition() ?? false)))// パーティ内の生存者が残り一人の場合、死んでいるメンバーのみ控えに移動可能 / If there is only one survivor left in the party, only the dead member can be moved to the standby.
+                (AliveMemberCount > 1 || (memberProperties[0].Hero?.IsDeadCondition() ?? false)))// パーティ内の生存者が残り一人の場合、死んでいるメンバーのみ控えに移動可能 / If there is only one survivor left in the party, only the dead member can be moved to the reserve.
             {
                 LayoutDrawer.ConfigureMenuContainerContentProperty(BattleReserve.Count + 1, 1);
             }

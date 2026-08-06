@@ -685,7 +685,7 @@ namespace Yukar.Battle
                 var enemy = targetEnemyData[i] as BattleEnemyData;
                 Vector3 position;
 
-                if (monsterLayouts[i].IsLayoutValid())
+                if (i < (monsterLayouts?.Length ?? 0) && monsterLayouts[i].IsLayoutValid())
                 {
                     position = monsterLayouts[i].Layout + BattleSequenceManagerBase.battleFieldCenter;
                 }
@@ -1608,6 +1608,11 @@ namespace Yukar.Battle
 
         private void AddBattleDamageTextInfo(List<BattleDamageTextInfo> inTextInfo, BattleDamageTextInfo.TextType inTextType, BattleCharacterBase inTarget, string inText, System.Guid inStatusId)
         {
+            if (inTextInfo == null || inTarget == null)
+            {
+                return;
+            }
+
             var color = Color.White;
 
             if (inStatusId != Guid.Empty)
@@ -1652,6 +1657,11 @@ namespace Yukar.Battle
 
         private void AddBattleMissTextInfo(List<BattleDamageTextInfo> inTextInfo, BattleCharacterBase inTarget)
         {
+            if (inTextInfo == null || inTarget == null)
+            {
+                return;
+            }
+
             inTextInfo.Add(new BattleDamageTextInfo(BattleDamageTextInfo.TextType.Miss, inTarget, gameSettings.glossary.battle_miss));
         }
 
@@ -1850,9 +1860,20 @@ namespace Yukar.Battle
             List<BattleDamageTextInfo> textInfo, List<RecoveryStatusInfo> recoveryStatusInfo, out BattleCharacterBase[] friend, out BattleCharacterBase[] enemy,
             out ReflectionInfo[] reflections, bool checkReflection)
         {
+            friend = Array.Empty<BattleCharacterBase>();
+            enemy = Array.Empty<BattleCharacterBase>();
+            reflections = Array.Empty<ReflectionInfo>();
+
+            if (effecter == null || skill == null)
+            {
+                return;
+            }
+
             var gs = catalog.getGameSettings();
             var friendEffect = skill.friendEffect;
             var enemyEffect = skill.enemyEffect;
+            friendEffectTargets = (friendEffectTargets ?? Array.Empty<BattleCharacterBase>()).Where(x => x != null).ToArray();
+            enemyEffectTargets = (enemyEffectTargets ?? Array.Empty<BattleCharacterBase>()).Where(x => x != null).ToArray();
             var useOldEffectParam = false;
             var option = skill.option;
             int totalHitPointDamage = 0;
@@ -1989,13 +2010,15 @@ namespace Yukar.Battle
 				enemySkillDamageType = (battleRandom.Next(100) < enemyCriticalPercent) ? SkillDamageType.Critical : SkillDamageType.Normal;
 			}
 
-			var friendEffectCharacters = new List<BattleCharacterBase>();
+           var friendEffectCharacters = new List<BattleCharacterBase>();
             var enemyEffectCharacters = new List<BattleCharacterBase>();
 
-            foreach (var target in friendEffectTargets)
+            if (friendEffect != null)
             {
-                bool isEffect = false;
-                bool isReflection = false;
+                foreach (var target in friendEffectTargets)
+                {
+                    bool isEffect = false;
+                    bool isReflection = false;
 
                 var reflect = target.GetReflectionParam(skill, true);
                 if (checkReflection && reflect != null && reflect.Percent > battleRandom.Next(100))
@@ -2413,26 +2436,29 @@ namespace Yukar.Battle
                 else
                     target.CommandReactionType = ReactionType.None;
 
-				target.InitializeEquipmentReAttachCondition(battleEvents);
+              target.InitializeEquipmentReAttachCondition(battleEvents);
 
-                // 控えへの効果は即時GameDataに反映させる
-                // Effects on reserve are immediately reflected in GameData
-                if (target is BattlePlayerData && !playerData.Contains(target))
-                {
-                    ApplyPlayerDataToGameData(target as BattlePlayerData);
+                    // 控えへの効果は即時GameDataに反映させる
+                    // Effects on reserve are immediately reflected in GameData
+                    if (target is BattlePlayerData && !playerData.Contains(target))
+                    {
+                        ApplyPlayerDataToGameData(target as BattlePlayerData);
+                    }
                 }
-			}
+            }
 
             // 対象にスキル効果を反映
             // Reflect skill effect on target
             effecter.isSkillCriticalTargets.Clear();
 
-            for (int i = 0; i < enemyEffectTargets.Length; i++)
+            if (enemyEffect != null)
             {
-				var target = enemyEffectTargets[i];
-				bool isEffect = false;
-                bool isDisplayMiss = false;
-                bool isReflection = false;
+                for (int i = 0; i < enemyEffectTargets.Length; i++)
+                {
+                    var target = enemyEffectTargets[i];
+                    bool isEffect = false;
+                    bool isDisplayMiss = false;
+                    bool isReflection = false;
 
                 var reflect = target.GetReflectionParam(skill, false);
                 if (checkReflection && reflect != null && reflect.Percent > battleRandom.Next(100))
@@ -3033,8 +3059,9 @@ namespace Yukar.Battle
                 else
                     target.CommandReactionType = ReactionType.None;
 
-				target.InitializeEquipmentReAttachCondition(battleEvents);
-			}
+                  target.InitializeEquipmentReAttachCondition(battleEvents);
+                }
+            }
 
 			// 与えたダメージ分 自分のHP, MPを回復する
 			// Recover HP and MP equal to the damage dealt
@@ -5516,6 +5543,16 @@ namespace Yukar.Battle
                 return;
             battleEvents.clearCurrentProcessingTrigger();
 
+            // 注意: エンジン本体の r74573(#29489) は commandExecuteMemberCount を battleEntryCharacters の
+            // Note: r74573(#29489) in the engine itself sets commandExecuteMemberCount to battleEntryCharacters.
+            // インデックスとして使う前提でここに範囲外ガードを追加しているが、バトルプラグインは
+            // I added an out-of-range guard here with the premise of using it as an index, but the battle plugin
+            // WaitCtbGauge で battleEntryCharacters[0] を activeCharacter へ移してから RemoveAt(0) するため、
+            // In order to move battleEntryCharacters[0] to activeCharacter in WaitCtbGauge and then RemoveAt(0),
+            // この時点で battleEntryCharacters が空(Count==0)なのは正常。ガードを入れると 0>=0 が成立し
+            // It is normal for battleEntryCharacters to be empty (Count==0) at this point.
+            // 行動が発動せず BattleFinishCheck2 へ飛んでしまうので、プラグインでは適用しない。
+            // Since the action will not be activated and the process will jump to BattleFinishCheck2, it cannot be applied in the plugin.
             // キャストの行動の都度、位置調整する時はコメントを外す
             // Remove the comment when adjusting the position each time the cast acts
             //UpdatePosition();
@@ -6280,6 +6317,13 @@ namespace Yukar.Battle
 
         private void GetSkillTarget(Rom.NSkill skill, out BattleCharacterBase[] friendEffectTargets, out BattleCharacterBase[] enemyEffectTargets)
         {
+            if (skill == null || activeCharacter == null)
+            {
+                friendEffectTargets = Array.Empty<BattleCharacterBase>();
+                enemyEffectTargets = Array.Empty<BattleCharacterBase>();
+                return;
+            }
+
             activeCharacter.GetSkillTarget(skill, out friendEffectTargets, out enemyEffectTargets,
                 activeCharacter.FriendPartyRefMember.Where(x => IsHitRange(activeCharacter, skill.Range, x)),
                 activeCharacter.EnemyPartyRefMember.Where(x => IsHitRange(activeCharacter, skill.Range, x)),
@@ -6556,7 +6600,9 @@ namespace Yukar.Battle
             ClearCommandEffect();
             GetCommandEffectImpl(activeCharacter, catalog, out var friendEffectGuid, out var enemyEffectGuid, out var enemySkillCriticalEffectGuid, battleViewer);
 
-            if (activeCharacter.targetCharacter != null)
+            var targets = activeCharacter?.targetCharacter;
+
+            if (targets != null)
             {
                 // 敵がスキルを使用した場合、敵味方を反転させる
                 // Inverts allies and enemies when using a skill
@@ -6569,9 +6615,14 @@ namespace Yukar.Battle
                     enemyEffectGuid = tmp;
                 }
 
-                for (int i = 0; i < activeCharacter.targetCharacter.Length; i++)
+                for (int i = 0; i < targets.Length; i++)
                 {
-                    var target = activeCharacter.targetCharacter[i];
+                    var target = targets[i];
+
+                    if (target == null)
+                    {
+                        continue;
+                    }
 
                     if (target.IsHero)
                     {
@@ -6659,6 +6710,10 @@ namespace Yukar.Battle
             enemyEffectGuid = Guid.Empty;
 			enemySkillCriticalEffectGuid = Guid.Empty;
 
+            if (activeCharacter == null)
+            {
+                return;
+            }
 
 			switch (activeCharacter.selectedBattleCommandType)
             {
@@ -6692,7 +6747,17 @@ namespace Yukar.Battle
                 case BattleCommandType.SameSkillEffect:
                     if (activeCharacter.targetCharacter != null)
                     {
+                        if (activeCharacter.selectedBattleCommand == null)
+                        {
+                            break;
+                        }
+
                         var skill = catalog.getItemFromGuid(activeCharacter.selectedBattleCommand.refGuid) as Rom.NSkill;
+
+                        if (skill?.option == null)
+                        {
+                            break;
+                        }
 
                         switch (skill.option.target)
                         {
@@ -6702,12 +6767,12 @@ namespace Yukar.Battle
                             case Rom.TargetType.OTHER_ONE:
 							case Rom.TargetType.SELF:
                             case Rom.TargetType.OTHERS:
-                                friendEffectGuid = skill.friendEffect.effect;
+                                friendEffectGuid = skill.friendEffect?.effect ?? Guid.Empty;
                                 break;
 
                             case Rom.TargetType.ENEMY_ONE:
                             case Rom.TargetType.ENEMY_ALL:
-                                enemyEffectGuid = skill.enemyEffect.effect;
+                                enemyEffectGuid = skill.enemyEffect?.effect ?? Guid.Empty;
                                 break;
 
                             case Rom.TargetType.PARTY_ONE_ENEMY_ALL:
@@ -6717,8 +6782,8 @@ namespace Yukar.Battle
                             case Rom.TargetType.ALL:
                             case Rom.TargetType.OTHERS_ENEMY_ONE:
                             case Rom.TargetType.OTHERS_ALL:
-                                friendEffectGuid = skill.friendEffect.effect;
-                                enemyEffectGuid = skill.enemyEffect.effect;
+                                friendEffectGuid = skill.friendEffect?.effect ?? Guid.Empty;
+                                enemyEffectGuid = skill.enemyEffect?.effect ?? Guid.Empty;
                                 break;
                         }
                     }
@@ -6727,6 +6792,11 @@ namespace Yukar.Battle
 				case BattleCommandType.Skill:
                     if (activeCharacter.targetCharacter != null)
                     {
+                        if (activeCharacter.selectedSkill?.option == null)
+                        {
+                            break;
+                        }
+
                         var isCritical = activeCharacter.lastHitCheckResult == BattleCharacterBase.HitCheckResult.CRITICAL; ;
 
 						switch (activeCharacter.selectedSkill.option.target)
@@ -6737,7 +6807,7 @@ namespace Yukar.Battle
                             case Rom.TargetType.OTHER_ONE:
 							case Rom.TargetType.SELF:
                             case Rom.TargetType.OTHERS:
-                                friendEffectGuid = activeCharacter.selectedSkill.friendEffect.effect;
+                                friendEffectGuid = activeCharacter.selectedSkill.friendEffect?.effect ?? Guid.Empty;
                                 break;
 
                             case Rom.TargetType.ENEMY_ONE:
@@ -6746,12 +6816,12 @@ namespace Yukar.Battle
                                 {
 									battleViewer?.SetDisplayMessage(activeCharacter.selectedSkill.MessageDamageSkillCritical);
 
-									enemySkillCriticalEffectGuid = activeCharacter.selectedSkill.enemyEffect.criticalEffect;
+                                    enemySkillCriticalEffectGuid = activeCharacter.selectedSkill.enemyEffect?.criticalEffect ?? Guid.Empty;
 								}
 
                                 if (enemyEffectGuid == Guid.Empty)
                                 {
-									enemyEffectGuid = activeCharacter.selectedSkill.enemyEffect.effect;
+                                 enemyEffectGuid = activeCharacter.selectedSkill.enemyEffect?.effect ?? Guid.Empty;
 								}
 								break;
 
@@ -6762,18 +6832,18 @@ namespace Yukar.Battle
                             case Rom.TargetType.ALL:
                             case Rom.TargetType.OTHERS_ENEMY_ONE:
                             case Rom.TargetType.OTHERS_ALL:
-                                friendEffectGuid = activeCharacter.selectedSkill.friendEffect.effect;
+                                friendEffectGuid = activeCharacter.selectedSkill.friendEffect?.effect ?? Guid.Empty;
 
 								if (isCritical)
 								{
 									battleViewer?.SetDisplayMessage(activeCharacter.selectedSkill.MessageDamageSkillCritical);
 
-									enemySkillCriticalEffectGuid = activeCharacter.selectedSkill.enemyEffect.criticalEffect;
+                                    enemySkillCriticalEffectGuid = activeCharacter.selectedSkill.enemyEffect?.criticalEffect ?? Guid.Empty;
 								}
 
                                 if (enemyEffectGuid == Guid.Empty)
                                 {
-                                    enemyEffectGuid = activeCharacter.selectedSkill.enemyEffect.effect;
+                                    enemyEffectGuid = activeCharacter.selectedSkill.enemyEffect?.effect ?? Guid.Empty;
                                 }
                                 break;
                         }
@@ -6786,11 +6856,26 @@ namespace Yukar.Battle
                         break;
 					}
 
+                    if (activeCharacter.selectedItem.item == null)
+                    {
+                        break;
+                    }
+
                     if (activeCharacter.selectedItem.item.IsExpandableWithSkill)
                     {
-                        var skill = (Common.Rom.NSkill)catalog.getItemFromGuid(activeCharacter.selectedItem.item.expendableWithSkill.skill);
+                        if (activeCharacter.selectedItem.item.expendableWithSkill == null)
+                        {
+                            break;
+                        }
+
+                        var skill = catalog.getItemFromGuid(activeCharacter.selectedItem.item.expendableWithSkill.skill) as Common.Rom.NSkill;
                         if (skill != null)
                         {
+                            if (skill.option == null)
+                            {
+                                break;
+                            }
+
                             switch (skill.option.target)
                             {
                                 case Rom.TargetType.PARTY_ONE:
@@ -6799,12 +6884,12 @@ namespace Yukar.Battle
 								case Rom.TargetType.OTHER_ONE:
 								case Rom.TargetType.SELF:
                                 case Rom.TargetType.OTHERS:
-                                    friendEffectGuid = skill.friendEffect.effect;
+                                    friendEffectGuid = skill.friendEffect?.effect ?? Guid.Empty;
                                     break;
 
                                 case Rom.TargetType.ENEMY_ONE:
                                 case Rom.TargetType.ENEMY_ALL:
-                                    enemyEffectGuid = skill.enemyEffect.effect;
+                                    enemyEffectGuid = skill.enemyEffect?.effect ?? Guid.Empty;
                                     break;
 
                                 case Rom.TargetType.ALL:                   // 敵味方全員 / All enemies and allies
@@ -6814,14 +6899,19 @@ namespace Yukar.Battle
                                 case Rom.TargetType.OTHERS_ALL:            // 自分以外の敵味方全員 / All enemies and allies other than yourself
                                 case Rom.TargetType.PARTY_ONE_ENEMY_ALL:   // 味方一人と敵全員 / One ally and all enemies
                                 case Rom.TargetType.PARTY_ALL_ENEMY_ONE:   // 味方全員と敵一人 / All allies and one enemy
-                                    friendEffectGuid = skill.friendEffect.effect;
-                                    enemyEffectGuid = skill.enemyEffect.effect;
+                                    friendEffectGuid = skill.friendEffect?.effect ?? Guid.Empty;
+                                    enemyEffectGuid = skill.enemyEffect?.effect ?? Guid.Empty;
                                     break;
                             }
                         }
                     }
                     else if (activeCharacter.selectedItem.item.IsExpandable)
                     {
+                        if (activeCharacter.selectedItem.item.expendable == null)
+                        {
+                            break;
+                        }
+
                         {
                             friendEffectGuid = activeCharacter.selectedItem.item.expendable.effect;
                         }
@@ -8011,6 +8101,14 @@ namespace Yukar.Battle
                         commandSelectPlayer.selectedItem = null;
                         commandSelectPlayer.selectedSkill = skill;
 
+                        // スキルがなくなっていた場合は進行できない
+                        // You cannot progress if the skill is gone.
+                        if (skill == null)
+                        {
+                            battleCommandState = SelectBattleCommandState.CommandSelect;
+                            break;
+                        }
+
                         switch (skill.option.target)
                         {
                             case Rom.TargetType.PARTY_ONE:
@@ -8318,7 +8416,7 @@ namespace Yukar.Battle
 
                     // 決定
                     // decision
-                    if (Viewer.ui.skillList.Decided &&
+                    if (Viewer.ui.itemList.Decided &&
                         Viewer.ui.itemList.Index >= 0 &&
                         commandSelectPlayer.haveItemList.Count > Viewer.ui.itemList.Index &&
                         itemSelectWindowDrawer.GetChoicesData()[Viewer.ui.itemList.Index].enable)
