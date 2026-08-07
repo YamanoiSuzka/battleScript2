@@ -13,6 +13,10 @@ namespace Yukar.Battle
     /// </summary>
     public class BattleActor
     {
+        // このタグを持つ状態のモーションは、コマンド選択中にも適用する。
+        // Condition motions with this tag are also applied during command selection.
+        private const string COMMAND_SELECT_CONDITION_MOTION_TAG = "command_select_motion";
+
         /// <summary>
         /// アクターの演技種別
         /// Actor performance type
@@ -531,8 +535,12 @@ namespace Yukar.Battle
                         break;
                     }
 
-                    if (!playMotion("command_wait"))
-                        playWaitMotion();
+                    var commandSelectConditionMotion = getConditionMotion(COMMAND_SELECT_CONDITION_MOTION_TAG);
+                    if (commandSelectConditionMotion == null || !playMotion(commandSelectConditionMotion))
+                    {
+                        if (!playMotion("command_wait"))
+                            playWaitMotion();
+                    }
 
                     break;
 
@@ -857,7 +865,7 @@ namespace Yukar.Battle
             }
         }
 
-        internal string getConditionMotion()
+        internal string getConditionMotion(string requiredTag = null)
         {
             if (source == null)
                 return null;
@@ -867,13 +875,28 @@ namespace Yukar.Battle
             foreach (var e in source.conditionInfoDic)
             {
                 var condition = e.Value.rom;
-                if ((condition != null) && !string.IsNullOrEmpty(condition.motion) && highestPriority < condition.Priority && condition.IsActionDisabled == false)
+                if ((condition != null) &&
+                    !string.IsNullOrEmpty(condition.motion) &&
+                    (requiredTag == null || HasTag(condition.tags, requiredTag)) &&
+                    highestPriority < condition.Priority &&
+                    condition.IsActionDisabled == false)
                 {
                     motion = condition.motion;
                     highestPriority = condition.Priority;
                 }
             }
             return motion;
+        }
+
+        private static bool HasTag(string tags, string tag)
+        {
+            if (string.IsNullOrWhiteSpace(tags))
+                return false;
+
+            var separators = new[] { ' ', '\t', '\r', '\n', ',', ';' };
+            return tags.Split(separators, StringSplitOptions.RemoveEmptyEntries)
+                .Select(x => x.TrimStart('#', '＃'))
+                .Any(x => string.Equals(x, tag, StringComparison.OrdinalIgnoreCase));
         }
 
         internal ActorStateType getActorState()
