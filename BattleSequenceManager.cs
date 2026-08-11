@@ -49,6 +49,9 @@ namespace Yukar.Battle
         // このタグを持つスキルは、共通の発動演出を省略する。
         // Skills with this tag skip the common activation presentation.
         private const string SKIP_ACTIVATION_PRESENTATION_SKILL_TAG = "ctb_skip_activation";
+        // このタグを持つ直接指定スキルは、通常攻撃としてメッセージを表示する。
+        // Directly assigned skills with this tag use the normal-attack message.
+        private const string NORMAL_ATTACK_SKILL_TAG = "通常攻撃";
         // このタグを持つスキルは、命中した対象のCTBゲージを後退させる。
         // Skills with this tag push back the CTB gauge of affected targets.
         private const string CTB_STUN_SKILL_TAG = "ctb_stun";
@@ -6517,7 +6520,30 @@ namespace Yukar.Battle
                 if (!isActionDisabled && ShouldSkipSkillActivationPresentation())
                 {
                     battleViewer.ClearDisplayMessage();
-                    ChangeBattleState(BattleState.ExecuteBattleCommand);
+                    var hasActionPresentation = HasSkillActionPresentation();
+                    if (hasActionPresentation)
+                    {
+                        // 共通演出は省略するが、設定されたモーションや固有エフェクトは実行する。
+                        // Skip the common presentation, but keep configured motion and skill effects.
+                        activeCharacter.ExecuteCommandStart();
+                    }
+
+                    if (IsNormalAttackSkillCommand())
+                    {
+                        // 通常攻撃へ割り当てたスキルでは、スキル共通メッセージの代わりに攻撃メッセージを表示する。
+                        // A skill assigned to normal attack keeps the normal-attack message.
+                        ChangeBattleState(BattleState.SetCommandMessageText);
+                    }
+                    else if (hasActionPresentation)
+                    {
+                        ChangeBattleState(BattleState.DisplayMessageText);
+                    }
+                    else
+                    {
+                        // モーションも固有エフェクトもなければ、既定モーションの待機も省略する。
+                        // With neither motion nor a visual effect, also skip the default-motion wait.
+                        ChangeBattleState(BattleState.ExecuteBattleCommand);
+                    }
                     return;
                 }
 
@@ -6536,18 +6562,62 @@ namespace Yukar.Battle
             }
         }
 
-        private bool ShouldSkipSkillActivationPresentation()
+        internal bool ShouldSkipSkillActivationPresentation()
         {
-            if (activeCharacter?.selectedBattleCommandType != BattleCommandType.Skill ||
-                activeCharacter.selectedSkill == null)
-            {
-                return false;
-            }
+            var skill = GetActivationPresentationSkill();
+            return HasSkillTag(skill, SKIP_ACTIVATION_PRESENTATION_SKILL_TAG);
+        }
 
-            if (HasSkillTag(activeCharacter.selectedSkill, SKIP_ACTIVATION_PRESENTATION_SKILL_TAG))
+        internal bool HasSkillActionPresentation()
+        {
+            var skill = GetActivationPresentationSkill();
+            if (skill == null)
+                return false;
+
+            var hasMotion = !string.IsNullOrWhiteSpace(skill.option?.motion);
+            var hasVisualEffect = (skill.friendEffect?.effect ?? Guid.Empty) != Guid.Empty ||
+                (skill.enemyEffect?.effect ?? Guid.Empty) != Guid.Empty ||
+                (skill.enemyEffect?.criticalEffect ?? Guid.Empty) != Guid.Empty;
+            return hasMotion || hasVisualEffect;
+        }
+
+        private Rom.NSkill GetActivationPresentationSkill()
+        {
+            if (activeCharacter == null)
+                return null;
+
+            switch (activeCharacter.selectedBattleCommandType)
+            {
+                case BattleCommandType.Skill:
+                    return activeCharacter.selectedSkill;
+
+                case BattleCommandType.SameSkillEffect:
+                    // バトルコマンドへ直接割り当てたスキルは、通常のスキル選択とは別の種別で実行される。
+                    // A skill assigned directly to a battle command is executed as a different command type.
+                    var skill = activeCharacter.selectedSkill;
+                    if (skill == null && activeCharacter.selectedBattleCommand != null)
+                    {
+                        skill = catalog.getItemFromGuid(activeCharacter.selectedBattleCommand.refGuid) as Rom.NSkill;
+                    }
+                    return skill;
+
+                default:
+                    return null;
+            }
+        }
+
+        private bool IsNormalAttackSkillCommand()
+        {
+            if (activeCharacter?.selectedBattleCommandType != BattleCommandType.SameSkillEffect)
+                return false;
+
+            var skill = GetActivationPresentationSkill();
+            if (HasSkillTag(skill, NORMAL_ATTACK_SKILL_TAG))
                 return true;
 
-            return false;
+            var commandName = activeCharacter.selectedBattleCommand?.name;
+            return string.Equals(commandName, "攻撃", StringComparison.Ordinal) ||
+                string.Equals(commandName, "通常攻撃", StringComparison.Ordinal);
         }
 
         private void UpdateBattleState_DisplayStatusMessage()
@@ -6607,7 +6677,9 @@ namespace Yukar.Battle
                     message = string.Format(gameSettings.glossary.battle_charge, activeCharacter.Name);
                     break;
                 case BattleCommandType.SameSkillEffect:
-                    message = activeCharacter.selectedBattleCommand.name;
+                    message = IsNormalAttackSkillCommand()
+                        ? string.Format(gameSettings.glossary.battle_attack, activeCharacter.Name)
+                        : activeCharacter.selectedBattleCommand?.name ?? "";
                     break;
                 case BattleCommandType.Skill:
                     {

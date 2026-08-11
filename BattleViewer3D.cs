@@ -2909,6 +2909,7 @@ namespace Yukar.Battle
                     case BattleCommandType.SameSkillEffect:
                         if (start)
                         {
+                            var skipActivationPresentation = owner.ShouldSkipSkillActivationPresentation();
                             var motion = self.selectedSkill.option.motion;
                             if (motion == "%%USE_ATTACK_MOTION")
                                 motion = GetAttackMotion(self, "attack");
@@ -2916,7 +2917,7 @@ namespace Yukar.Battle
                             actor.queueActorState(BattleActor.ActorStateType.SKILL_WAIT);
                             actor.queueActorState(BattleActor.ActorStateType.SKILL, motion, 0, () =>
                             {
-                                if (actor.frontDir > 0)
+                                if (actor.frontDir > 0 && !skipActivationPresentation)
                                 {
                                     Audio.PlaySound(game.se.skill);
                                     skillEffect?.setVisibility(true);
@@ -2927,7 +2928,8 @@ namespace Yukar.Battle
                             });
                             //if (actor.frontDir > 0)
                             {
-                                if (game.data.IsBattleCameraEnabled(Common.GameData.SystemData.BATTLE_CAMERA_SITUATION_SKILL, catalog))
+                                if (!skipActivationPresentation &&
+                                    game.data.IsBattleCameraEnabled(Common.GameData.SystemData.BATTLE_CAMERA_SITUATION_SKILL, catalog))
                                 {
                                     // Initializeが遅れてIsEffectEndPlay == true が返ってきてしまうので、Initialize前の動きを管理する
                                     // Since Initialize is delayed and IsEffectEndPlay == true is returned, manage the movement before Initialize
@@ -2953,7 +2955,10 @@ namespace Yukar.Battle
                         }
                         else
                         {
-                            actor.queueActorState(BattleActor.ActorStateType.SKILL_END);
+                            if (!owner.ShouldSkipSkillActivationPresentation() || owner.HasSkillActionPresentation())
+                            {
+                                actor.queueActorState(BattleActor.ActorStateType.SKILL_END);
+                            }
                         }
                         break;
 
@@ -3193,6 +3198,15 @@ namespace Yukar.Battle
                     case BattleCommandType.Critical:
                     case BattleCommandType.ForceCritical:
                         if (actor.getActorState() != BattleActor.ActorStateType.ATTACK)
+                        {
+                            return false;
+                        }
+                        break;
+                    case BattleCommandType.Skill:
+                    case BattleCommandType.SameSkillEffect:
+                        if (owner.ShouldSkipSkillActivationPresentation() &&
+                            owner.HasSkillActionPresentation() &&
+                            actor.getActorState() != BattleActor.ActorStateType.SKILL)
                         {
                             return false;
                         }
