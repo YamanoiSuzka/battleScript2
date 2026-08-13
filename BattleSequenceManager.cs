@@ -6430,7 +6430,7 @@ namespace Yukar.Battle
 
         // 攻撃を受けた時の状態異常 回復判定
         // Status abnormality recovery judgment when attacked
-        private void CheckDamageRecovery(BattleCharacterBase target, int damage)
+        internal void CheckDamageRecovery(BattleCharacterBase target, int damage, IEnumerable<Hero.ConditionInfo> conditionsAtDamage = null)
         {
             var recoveryList = new List<Hero.ConditionInfo>(target.conditionInfoDic.Count);
 
@@ -6438,7 +6438,8 @@ namespace Yukar.Battle
             {
                 var info = e.Value;
 
-                if ((info.recovery & Hero.ConditionInfo.RecoveryType.Damage) != 0)
+                if ((conditionsAtDamage == null || conditionsAtDamage.Any(x => ReferenceEquals(x, info))) &&
+                    (info.recovery & Hero.ConditionInfo.RecoveryType.Damage) != 0)
                 {
                     info.damageValue -= damage;
 

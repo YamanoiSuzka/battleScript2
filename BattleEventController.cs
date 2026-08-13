@@ -32,6 +32,13 @@ namespace Yukar.Battle
         private List<MapCharacter> extras = new List<MapCharacter>();
         private Catalog catalog;
         private BattleSequenceManager battle;
+        private class PendingDamageRecovery
+        {
+            internal BattleCharacterBase Target;
+            internal int Damage;
+            internal Yukar.Common.GameData.Hero.ConditionInfo[] ConditionsAtDamage;
+        }
+        private readonly List<PendingDamageRecovery> pendingDamageRecoveries = new List<PendingDamageRecovery>();
 
         public bool battleUiVisibility = true;
         private List<ScriptRunner> mapRunnerBorrowed = new List<ScriptRunner>();
@@ -137,6 +144,7 @@ namespace Yukar.Battle
             }
 
             memberChangeQueue.Clear();
+            pendingDamageRecoveries.Clear();
             savedSlotPositions.Clear();
             extras = null;
             cameraControlMode = Map.CameraControlMode.NORMAL;
@@ -670,6 +678,12 @@ namespace Yukar.Battle
                     return true;
                 }
             }
+
+            foreach (var pending in pendingDamageRecoveries)
+            {
+                battle.CheckDamageRecovery(pending.Target, pending.Damage, pending.ConditionsAtDamage);
+            }
+            pendingDamageRecoveries.Clear();
 
             // ダメージ用テキストとステータス用ゲージのアニメーションが終わるまで待つ
             // Wait for damage text and status gauge animation to finish
@@ -1772,7 +1786,23 @@ namespace Yukar.Battle
 
                     if (statusId == gs.maxHPStatusID)
                     {
+                        var previousHitPoint = target.HitPoint;
                         target.HitPoint = target.consumptionStatusValue.GetStatus(statusId);
+
+                        var damage = previousHitPoint - target.HitPoint;
+                        if (damage > 0)
+                        {
+                            var conditionsAtDamage = target.conditionInfoDic.Values.ToArray();
+                            if (conditionsAtDamage.Length > 0)
+                            {
+                                pendingDamageRecoveries.Add(new PendingDamageRecovery
+                                {
+                                    Target = target,
+                                    Damage = damage,
+                                    ConditionsAtDamage = conditionsAtDamage,
+                                });
+                            }
+                        }
 
                         if (target.HitPoint > 0)
                         {
