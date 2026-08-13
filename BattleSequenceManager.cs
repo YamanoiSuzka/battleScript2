@@ -6712,7 +6712,13 @@ namespace Yukar.Battle
 
         private void UpdateBattleState_DisplayMessageText()
         {
-            if ((battleStateFrameCount > 20 || battleViewer.HasNoMessageWindow() || Input.KeyTest(Input.StateType.TRIGGER, Input.KeyStates.DECIDE, Input.GameState.MENU)) && isReady3DCamera() && isReadyActor())
+            var isMeleeAttack = HasSkillTag(GetActivationPresentationSkill(), "近接攻撃");
+            var isPresentationWaitFinished = isMeleeAttack
+                ? battleStateFrameCount > 20
+                : battleStateFrameCount > 20 || battleViewer.HasNoMessageWindow() ||
+                    Input.KeyTest(Input.StateType.TRIGGER, Input.KeyStates.DECIDE, Input.GameState.MENU);
+
+            if (isPresentationWaitFinished && (isMeleeAttack || isReady3DCamera()) && isReadyActor())
             {
                 ChangeBattleState(BattleState.ExecuteBattleCommand);
             }
