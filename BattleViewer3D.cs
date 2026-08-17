@@ -1811,6 +1811,8 @@ namespace Yukar.Battle
                     color = Util.MultiplyColor(color, monster.commandEffectColor.CurrentValue);
                 }
 
+                ApplyBossDeathColor(monster, ref color);
+
                 if (!monster.monster.visibleWhenKO)
                 {
                     currentTransparency *= Math.Min(1, monster.imageAlpha);
@@ -2404,6 +2406,9 @@ namespace Yukar.Battle
 
                 var prevState = actor.getActorState();
                 var prevOption = actor.getActorStateOption();
+
+                var enemySource = actor.source as BattleEnemyData;
+                actor.setBossDeathShakeOffset(enemySource == null ? 0.0f : GetBossDeathShakeOffset(enemySource) * 0.01f);
 
                 actor.Update(mapDrawer, inAngleY, false);
 

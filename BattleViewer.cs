@@ -40,6 +40,19 @@ namespace Yukar.Battle
         protected const float MonsterBreathingWeakSpeedRate = MonsterBreathingWeakSpeed / MonsterBreathingSpeed;
         protected const float MonsterBreathingWeakAmountRate = MonsterBreathingWeakAmount / MonsterBreathingAmount;
 
+        // Boss 撃破時は、2回のフラッシュ後に横揺れと赤化を行ってから通常の消滅処理へ渡す。
+        private const string BossMonsterTag = "Boss";
+        private const float BossDeathFlash1End = 12.0f;
+        private const float BossDeathFlash2Start = 16.0f;
+        private const float BossDeathFlash2End = 28.0f;
+        private const float BossDeathRedStart = BossDeathFlash2End;
+        private const float BossDeathPresentationEnd = 118.0f;
+        private const float BossDeathShakePixels = 8.0f;
+        private const string BossSecondFlashSoundName = "SE_field_Thunder_01_loop";
+        private readonly Dictionary<BattleEnemyData, float> bossDeathPresentationTimers = new Dictionary<BattleEnemyData, float>();
+        private readonly HashSet<BattleEnemyData> bossDeathSequenceMonsters = new HashSet<BattleEnemyData>();
+        private int bossSecondFlashSoundId = -1;
+
         protected WindowType displayWindow;
 
         protected WindowDrawer windowDrawer;
@@ -350,6 +363,17 @@ namespace Yukar.Battle
 
                 effectDrawer.initialize();
             }
+
+            var bossSecondFlashSound = catalog.getItemFromName(BossSecondFlashSoundName,
+                typeof(Resource.SoundResource)) as Resource.SoundResource;
+            if (bossSecondFlashSound != null)
+            {
+                // "loop" という名前の音源だが、ボス演出では2回目のフラッシュ時に1回だけ再生する。
+                bool wasLoop = bossSecondFlashSound.isLoop;
+                bossSecondFlashSound.isLoop = false;
+                bossSecondFlashSoundId = Audio.LoadSound(bossSecondFlashSound, true);
+                bossSecondFlashSound.isLoop = wasLoop;
+            }
         }
 
         internal virtual void BattleStart(List<BattlePlayerData> playerData, List<BattleEnemyData> enemyMonsterData)
@@ -357,6 +381,8 @@ namespace Yukar.Battle
             refreshLayout(playerData, enemyMonsterData);
             effectDrawTargetMonsterList.Clear();
             defeatEffectDrawTargetList.Clear();
+            bossDeathPresentationTimers.Clear();
+            bossDeathSequenceMonsters.Clear();
             prevSelectedMonster = null;
 
             displayWindow = WindowType.None;
@@ -476,6 +502,12 @@ namespace Yukar.Battle
 
         internal virtual void ReleaseResourceData()
         {
+            if (bossSecondFlashSoundId >= 0)
+            {
+                Audio.UnloadSound(bossSecondFlashSoundId);
+                bossSecondFlashSoundId = -1;
+            }
+
             Graphics.UnloadImage(windowDrawer.WindowResource);
 
             Graphics.UnloadImage(battleStatusWindowDrawer.getWindowRes());
@@ -537,6 +569,8 @@ namespace Yukar.Battle
         internal virtual void Update(List<BattlePlayerData> playerData, List<BattleEnemyData> enemyMonsterData)
         {
             viewerTimer += GameMain.getRelativeParam60FPS();
+
+            UpdateBossDeathPresentations();
 
             blinker.update();
             choiceWindowCursolColor.update();
@@ -726,7 +760,10 @@ namespace Yukar.Battle
                     color = monster.commandEffectColor.CurrentValue;
                 }
 
+                ApplyBossDeathColor(monster, ref color);
+
                 Vector2 pos = GetMonsterDrawPosition(monster);
+                pos.X += GetBossDeathShakeOffset(monster);
 
                 monster.EffectPosition = pos;
 
@@ -736,6 +773,7 @@ namespace Yukar.Battle
                     int imageHeight = Graphics.GetImageHeight(monster.imageId);
                     var sourceRect = new Rectangle(0, 0, imageWidth, imageHeight);
                     var distRect = GetMonsterDrawRect(monster, scale);
+                    distRect.X += (int)GetBossDeathShakeOffset(monster);
 
                     Graphics.DrawImage(monster.imageId, distRect, sourceRect, color);
 
@@ -1244,6 +1282,140 @@ namespace Yukar.Battle
             }
 
             return cast?.tags ?? monster.monster.tags ?? "";
+        }
+
+        internal bool IsBossMonster(BattleEnemyData monster)
+        {
+            var tags = GetMonsterTags(monster, catalog);
+            if (string.IsNullOrWhiteSpace(tags))
+                return false;
+
+            var separators = new[] { ' ', '\t', '\r', '\n', ',', ';' };
+            return tags.Split(separators, StringSplitOptions.RemoveEmptyEntries)
+                .Select(x => x.TrimStart('#', '＃'))
+                .Any(x => string.Equals(x, BossMonsterTag, StringComparison.OrdinalIgnoreCase));
+        }
+
+        internal bool StartBossDeathPresentation(BattleEnemyData monster)
+        {
+            if (!IsBossMonster(monster) || bossDeathPresentationTimers.ContainsKey(monster))
+                return false;
+
+            bossDeathPresentationTimers.Add(monster, 0.0f);
+            bossDeathSequenceMonsters.Add(monster);
+            return true;
+        }
+
+        internal bool IsBossDeathPresentationActive
+        {
+            get { return bossDeathSequenceMonsters.Count > 0; }
+        }
+
+        internal float BossDeathFlashAlpha
+        {
+            get
+            {
+                float alpha = 0.0f;
+                foreach (var timer in bossDeathPresentationTimers.Values)
+                    alpha = Math.Max(alpha, GetBossDeathFlashAlpha(timer));
+                return alpha;
+            }
+        }
+
+        private void UpdateBossDeathPresentations()
+        {
+            if (bossDeathPresentationTimers.Count == 0)
+            {
+                bossDeathSequenceMonsters.RemoveWhere(monster =>
+                    !fadeoutEnemyList.Contains(monster) && monster.imageAlpha <= 0);
+                return;
+            }
+
+            float elapsed = GameMain.getRelativeParam60FPS();
+            bool playSecondFlashSound = false;
+            bool playDefeatSound = false;
+            foreach (var monster in bossDeathPresentationTimers.Keys.ToArray())
+            {
+                // 演出中に復活した場合は消滅させない。
+                if (monster.HitPoint > 0 && !monster.IsDeadCondition())
+                {
+                    bossDeathPresentationTimers.Remove(monster);
+                    bossDeathSequenceMonsters.Remove(monster);
+                    continue;
+                }
+
+                float previousTimer = bossDeathPresentationTimers[monster];
+                float timer = previousTimer + elapsed;
+                if (previousTimer < BossDeathFlash2Start && timer >= BossDeathFlash2Start)
+                    playSecondFlashSound = true;
+
+                if (timer < BossDeathPresentationEnd)
+                {
+                    bossDeathPresentationTimers[monster] = timer;
+                    continue;
+                }
+
+                bossDeathPresentationTimers.Remove(monster);
+                if (!fadeoutEnemyList.Contains(monster))
+                {
+                    // ここで初めて通常の消滅エフェクト／フェードに渡す。
+                    monster.imageAlpha = 1 + FADEINOUT_SPEED * 20;
+                    fadeoutEnemyList.Add(monster);
+                    playDefeatSound = true;
+                }
+            }
+
+            if (playSecondFlashSound && bossSecondFlashSoundId >= 0)
+                Audio.PlaySound(bossSecondFlashSoundId);
+
+            if (playDefeatSound)
+            {
+                if (bossSecondFlashSoundId >= 0)
+                    Audio.StopSound(bossSecondFlashSoundId);
+
+                Audio.PlaySound(game.se.defeat);
+            }
+        }
+
+        private static float GetBossDeathFlashAlpha(float timer)
+        {
+            if (timer < BossDeathFlash1End)
+                return 1.0f - Math.Abs(timer - 6.0f) / 6.0f;
+            if (timer >= BossDeathFlash2Start && timer < BossDeathFlash2End)
+                return 1.0f - Math.Abs(timer - 22.0f) / 6.0f;
+            return 0.0f;
+        }
+
+        protected float GetBossDeathShakeOffset(BattleEnemyData monster)
+        {
+            float timer;
+            if (!bossDeathPresentationTimers.TryGetValue(monster, out timer) || timer < BossDeathRedStart)
+                return 0.0f;
+
+            float progress = Math.Min(1.0f,
+                (timer - BossDeathRedStart) / (BossDeathPresentationEnd - BossDeathRedStart));
+            return (float)Math.Sin((timer - BossDeathRedStart) * 1.35f) * BossDeathShakePixels * (0.55f + progress * 0.45f);
+        }
+
+        protected void ApplyBossDeathColor(BattleEnemyData monster, ref Color color)
+        {
+            float timer;
+            if (!bossDeathPresentationTimers.TryGetValue(monster, out timer))
+            {
+                if (!bossDeathSequenceMonsters.Contains(monster))
+                    return;
+
+                timer = BossDeathPresentationEnd;
+            }
+
+            if (timer < BossDeathRedStart)
+                return;
+
+            float progress = Math.Min(1.0f,
+                (timer - BossDeathRedStart) / (BossDeathPresentationEnd - BossDeathRedStart));
+            color.R = (byte)(color.R + (255 - color.R) * progress);
+            color.G = (byte)(color.G * (1.0f - progress * 0.88f));
+            color.B = (byte)(color.B * (1.0f - progress * 0.88f));
         }
 
         public static float GetMonsterDrawScale(BattleEnemyData monster, int enemyCount)

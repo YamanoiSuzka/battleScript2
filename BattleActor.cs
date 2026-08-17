@@ -115,6 +115,8 @@ namespace Yukar.Battle
         private float stateCount = 0;
         private const float DAMAGE_FLASH_DURATION = 8.0f;
         private float damageFlashTimer = 0;
+        private float bossDeathShakeOffsetX = 0;
+        private float nextBossDeathShakeOffsetX = 0;
         internal const float ESCAPE_MAX_COUNT = 20;
         public static Common.GameData.Party party;
         internal Microsoft.Xna.Framework.Color? overRidedColor;
@@ -378,6 +380,13 @@ namespace Yukar.Battle
 
         internal void Update(MapData drawer, float yangle, bool isLockDirection)
         {
+            // 前フレームの一時オフセットを戻し、本来の座標を累積的にずらさない。
+            mapChr.pos.X -= bossDeathShakeOffsetX;
+            bossDeathShakeOffsetX = nextBossDeathShakeOffsetX;
+            nextBossDeathShakeOffsetX = 0;
+            mapChr.pos.X += bossDeathShakeOffsetX;
+
+            // MapCharacter.Update より前に適用し、3Dモデルの描画座標へ同期させる。
             mapChr.Update(drawer, yangle, isLockDirection);
 
             // 被弾時の点滅時間
@@ -460,6 +469,11 @@ namespace Yukar.Battle
             }
 
             stateCount += GameMain.getRelativeParam60FPS();
+        }
+
+        internal void setBossDeathShakeOffset(float offsetX)
+        {
+            nextBossDeathShakeOffsetX = offsetX;
         }
 
         internal void queueActorState(ActorStateType state)

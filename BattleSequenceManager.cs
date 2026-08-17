@@ -3731,12 +3731,19 @@ namespace Yukar.Battle
 
                         enemyMonster.selectedBattleCommandType = BattleCommandType.Cancel;
 
-                        // フェードアウト開始を遅らせる
-                        // Delay start of fadeout
-                        enemyMonster.imageAlpha = 1 + BattleViewer.FADEINOUT_SPEED * 20;
-                        battleViewer.AddFadeOutCharacter(enemyMonster);
-
-                        isPlaySE = true;
+                        if (battleViewer.IsBossMonster(enemyMonster))
+                        {
+                            // Boss は専用演出の完了後に BattleViewer 側から消滅処理へ渡す。
+                            battleViewer.StartBossDeathPresentation(enemyMonster);
+                        }
+                        else
+                        {
+                            // フェードアウト開始を遅らせる
+                            // Delay start of fadeout
+                            enemyMonster.imageAlpha = 1 + BattleViewer.FADEINOUT_SPEED * 20;
+                            battleViewer.AddFadeOutCharacter(enemyMonster);
+                            isPlaySE = true;
+                        }
                     }
                 }
                 else
@@ -7409,10 +7416,9 @@ namespace Yukar.Battle
 
 		private void UpdateBattleState_FadeMonsterImage1(BattleState nextBattleState)
 		{
-			//if (battleViewer.IsFadeEnd)
-			{
+			// 通常敵の従来テンポは保ち、Boss 専用演出の間だけ状態進行を待つ。
+			if (!battleViewer.IsBossDeathPresentationActive)
 				ChangeBattleState(nextBattleState);
-			}
 		}
 
 		private void UpdateBattleState_BattleFinishCheck1(BattleState nextBattleState)
@@ -9009,6 +9015,13 @@ namespace Yukar.Battle
                     break;
             }
 
+            float bossFlashAlpha = battleViewer.BossDeathFlashAlpha;
+            if (bossFlashAlpha > 0.0f)
+            {
+                Graphics.DrawFillRect(0, 0, Graphics.ScreenWidth, Graphics.ScreenHeight,
+                    255, 255, 255, (byte)(255 * bossFlashAlpha));
+            }
+
 
             Graphics.EndDraw();
 
@@ -9987,6 +10000,10 @@ namespace Yukar.Battle
         public override SharpKmyGfx.Color GetFadeScreenColor()
         {
             SharpKmyGfx.Color col = new SharpKmyGfx.Color(0, 0, 0, 0);
+
+            float bossFlashAlpha = battleViewer?.BossDeathFlashAlpha ?? 0.0f;
+            if (bossFlashAlpha > 0.0f)
+                return new SharpKmyGfx.Color(1, 1, 1, bossFlashAlpha);
 
             switch (battleState)
             {
