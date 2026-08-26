@@ -100,6 +100,27 @@ namespace Yukar.Battle
 
         Dictionary<Guid, EffectDrawer> conditionEffectDrawerDic = new Dictionary<Guid, EffectDrawer>();
 
+        // A short-lived notification shown beside a cast whenever its conditions change.
+        // Timers use the engine's 60 FPS-relative unit: 60 frames == one second.
+        private sealed class ConditionChangeNotification
+        {
+            public BattleCharacterBase Target;
+            public Rom.Condition Condition;
+            public bool Added;
+            public float Timer;
+        }
+
+        private const float ConditionNotificationDuration = 60.0f;
+        private const float ConditionNotificationFadeFrames = 12.0f;
+        private const float ConditionNotificationLineHeight = 34.0f;
+        private const int ConditionNotificationIconSize = 24;
+        private readonly Dictionary<BattleCharacterBase, HashSet<Guid>> conditionSnapshot =
+            new Dictionary<BattleCharacterBase, HashSet<Guid>>();
+        private readonly List<ConditionChangeNotification> conditionChangeNotifications =
+            new List<ConditionChangeNotification>();
+        private readonly Dictionary<Guid, Resource.Texture> conditionIconImages =
+            new Dictionary<Guid, Resource.Texture>();
+
         protected BattleEnemyData prevSelectedMonster;
 
         //static readonly Vector2 DefaultWindowOffset = new Vector2(0, -32);
@@ -362,6 +383,17 @@ namespace Yukar.Battle
                 conditionEffectDrawerDic.Add(condition.guId, effectDrawer);
 
                 effectDrawer.initialize();
+
+                if (condition.icon != null && condition.icon.guId != Guid.Empty &&
+                    !conditionIconImages.ContainsKey(condition.icon.guId))
+                {
+                    var iconImage = catalog.getItemFromGuid(condition.icon.guId) as Resource.Texture;
+                    conditionIconImages.Add(condition.icon.guId, iconImage);
+                    if (iconImage != null)
+                    {
+                        Graphics.LoadImage(iconImage);
+                    }
+                }
             }
 
             var bossSecondFlashSound = catalog.getItemFromName(BossSecondFlashSoundName,
@@ -387,6 +419,14 @@ namespace Yukar.Battle
 
             displayWindow = WindowType.None;
             displayMessageText = "";
+
+            conditionChangeNotifications.Clear();
+            conditionSnapshot.Clear();
+            foreach (var character in playerData.Cast<BattleCharacterBase>()
+                .Concat(enemyMonsterData ?? Enumerable.Empty<BattleEnemyData>()))
+            {
+                conditionSnapshot[character] = new HashSet<Guid>(character.conditionInfoDic.Keys);
+            }
         }
 
         internal void refreshLayout(List<BattlePlayerData> playerData, List<BattleEnemyData> enemyMonsterData)
@@ -536,6 +576,14 @@ namespace Yukar.Battle
             Graphics.UnloadImage(damageNumberImageId);
             Graphics.UnloadImage(serifImageId);
 
+            foreach (var iconImage in conditionIconImages.Values.Where(image => image != null).Distinct())
+            {
+                Graphics.UnloadImage(iconImage);
+            }
+            conditionIconImages.Clear();
+            conditionChangeNotifications.Clear();
+            conditionSnapshot.Clear();
+
             playerEffectDrawer.finalize();
             monsterEffectDrawer.finalize();
             foreach(var defeatEffectDrawer in defeatEffectDrawers)
@@ -569,6 +617,8 @@ namespace Yukar.Battle
         internal virtual void Update(List<BattlePlayerData> playerData, List<BattleEnemyData> enemyMonsterData)
         {
             viewerTimer += GameMain.getRelativeParam60FPS();
+
+            UpdateConditionChangeNotifications(playerData, enemyMonsterData);
 
             UpdateBossDeathPresentations();
 
@@ -699,6 +749,147 @@ namespace Yukar.Battle
                 drawer.initialize();
                 drawer.update();
             }
+        }
+
+        private void UpdateConditionChangeNotifications(List<BattlePlayerData> playerData,
+            List<BattleEnemyData> enemyMonsterData)
+        {
+            float elapsed = GameMain.getRelativeParam60FPS();
+            foreach (var notification in conditionChangeNotifications)
+            {
+                notification.Timer += elapsed;
+            }
+            conditionChangeNotifications.RemoveAll(notification =>
+                notification.Timer >= ConditionNotificationDuration);
+
+            var characters = playerData.Cast<BattleCharacterBase>()
+                .Concat(enemyMonsterData ?? Enumerable.Empty<BattleEnemyData>()).ToList();
+            var currentCharacters = new HashSet<BattleCharacterBase>(characters);
+
+            foreach (var character in characters)
+            {
+                var current = new HashSet<Guid>(character.conditionInfoDic.Keys);
+                HashSet<Guid> previous;
+                if (!conditionSnapshot.TryGetValue(character, out previous))
+                {
+                    // Joining/replaced casts establish a baseline; their pre-existing states are not changes.
+                    conditionSnapshot[character] = current;
+                    continue;
+                }
+
+                foreach (var conditionId in current.Except(previous))
+                {
+                    AddConditionChangeNotification(character, conditionId, true);
+                }
+                foreach (var conditionId in previous.Except(current))
+                {
+                    AddConditionChangeNotification(character, conditionId, false);
+                }
+
+                conditionSnapshot[character] = current;
+            }
+
+            foreach (var departed in conditionSnapshot.Keys.Where(character =>
+                !currentCharacters.Contains(character)).ToList())
+            {
+                conditionSnapshot.Remove(departed);
+                conditionChangeNotifications.RemoveAll(notification => notification.Target == departed);
+            }
+        }
+
+        private void AddConditionChangeNotification(BattleCharacterBase target, Guid conditionId, bool added)
+        {
+            var condition = catalog.getItemFromGuid(conditionId) as Rom.Condition;
+            Resource.Texture iconImage;
+            if (condition == null || condition.icon == null || condition.icon.guId == Guid.Empty ||
+                !conditionIconImages.TryGetValue(condition.icon.guId, out iconImage) || iconImage == null)
+            {
+                return;
+            }
+
+            conditionChangeNotifications.Add(new ConditionChangeNotification
+            {
+                Target = target,
+                Condition = condition,
+                Added = added,
+                Timer = 0.0f,
+            });
+        }
+
+        /// <summary>
+        /// Draw condition changes near each cast. Multiple simultaneous changes stack upward.
+        /// </summary>
+        protected void DrawConditionChangeNotifications(Func<BattleCharacterBase, Vector2?> positionResolver)
+        {
+            foreach (var targetGroup in conditionChangeNotifications
+                .Where(notification => notification.Target != null)
+                .GroupBy(notification => notification.Target))
+            {
+                Vector2? resolvedPosition = positionResolver(targetGroup.Key);
+                if (!resolvedPosition.HasValue)
+                {
+                    continue;
+                }
+
+                var notifications = targetGroup.OrderBy(notification => notification.Timer).ToList();
+                for (int index = 0; index < notifications.Count; index++)
+                {
+                    var notification = notifications[index];
+                    float alpha = GetConditionNotificationAlpha(notification.Timer);
+                    byte alphaByte = (byte)(255 * alpha);
+                    Color color = notification.Added
+                        ? new Color(128, 255, 176, alphaByte)
+                        : new Color(255, 184, 128, alphaByte);
+                    string text = notification.Added
+                        ? "+ " + notification.Condition.name
+                        : "× " + notification.Condition.name + " 終了";
+
+                    Vector2 textSize = textDrawer.MeasureString(text);
+                    float contentWidth = ConditionNotificationIconSize + 5.0f + textSize.X;
+                    Vector2 position = resolvedPosition.Value -
+                        new Vector2(contentWidth * 0.5f,
+                            44.0f + index * ConditionNotificationLineHeight);
+
+                    var icon = notification.Condition.icon;
+                    Resource.Texture iconImage;
+                    if (icon != null && conditionIconImages.TryGetValue(icon.guId, out iconImage) &&
+                        iconImage != null)
+                    {
+                        // Condition notification icons use 24 x 24 cells. Do not use the
+                        // legacy 32 x 32 Resource.Icon constants here, otherwise the atlas
+                        // offset can select or include part of an adjacent icon.
+                        var source = new Rectangle(icon.x * ConditionNotificationIconSize,
+                            icon.y * ConditionNotificationIconSize,
+                            ConditionNotificationIconSize, ConditionNotificationIconSize);
+                        var destination = new Rectangle((int)position.X, (int)position.Y,
+                            ConditionNotificationIconSize, ConditionNotificationIconSize);
+                        Graphics.DrawImage(iconImage, destination, source,
+                            new Color(255, 255, 255, alphaByte));
+                    }
+
+                    Vector2 textPosition = position +
+                        new Vector2(ConditionNotificationIconSize + 5.0f,
+                            (ConditionNotificationIconSize - textSize.Y) * 0.5f);
+                    // A translucent dark pass keeps the label legible against bright effects.
+                    textDrawer.DrawStringSoloColor(text, textPosition + new Vector2(1, 1),
+                        new Color(0, 0, 0, alphaByte));
+                    textDrawer.DrawStringSoloColor(text, textPosition, color);
+                }
+            }
+        }
+
+        private static float GetConditionNotificationAlpha(float timer)
+        {
+            if (timer < ConditionNotificationFadeFrames)
+            {
+                return Math.Max(0.0f, timer / ConditionNotificationFadeFrames);
+            }
+            if (timer > ConditionNotificationDuration - ConditionNotificationFadeFrames)
+            {
+                return Math.Max(0.0f,
+                    (ConditionNotificationDuration - timer) / ConditionNotificationFadeFrames);
+            }
+            return 1.0f;
         }
 
         internal virtual void Draw(List<BattlePlayerData> playerData, List<BattleEnemyData> enemyMonsterData)
@@ -1052,6 +1243,8 @@ namespace Yukar.Battle
 
                 damageTextList = damageTextList.Except(removeList);
             }
+
+            DrawConditionChangeNotifications(character => character.EffectPosition);
 
             var windowPos = Vector2.Zero;
             var windowSize = Vector2.Zero;

@@ -1214,6 +1214,14 @@ namespace Yukar.Battle
             // damage
             drawDamageText(playerData, enemyMonsterData);
 
+            DrawConditionChangeNotifications(character =>
+            {
+                var actor = searchFromActors(character);
+                return actor == null
+                    ? (Vector2?)null
+                    : actor.getScreenPos(p, v, MapScene.EffectPosType.Body);
+            });
+
             // エフェクト
             // effect
             Graphics.DrawImage(ui.particleViewTexture, 0, 0);
