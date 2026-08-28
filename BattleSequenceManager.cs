@@ -58,6 +58,9 @@ namespace Yukar.Battle
         // このタグを持つスキルは、発動時の待機を20フレームに固定し、カメラ終了を待たない。
         // Skills with this tag use a fixed 20-frame activation wait and do not wait for the camera to finish.
         private const string SHORTEN_PRESENTATION_SKILL_TAG = "短縮";
+        // このタグを持つスキルは、使用者のスキルモーション中に残像を表示する。
+        // Skills with this tag display afterimages during the user's skill motion.
+        private const string AFTERIMAGE_SKILL_TAG = "残像";
         // このタグを持つスキルは、命中した対象のCTBゲージを後退させる。
         // Skills with this tag push back the CTB gauge of affected targets.
         private const string CTB_STUN_SKILL_TAG = "ctb_stun";
@@ -6586,6 +6589,12 @@ namespace Yukar.Battle
         {
             var skill = GetActivationPresentationSkill();
             return HasSkillTag(skill, SYNCHRONIZE_EFFECT_SKILL_TAG);
+        }
+
+        internal bool ShouldShowSkillAfterimages()
+        {
+            var skill = GetActivationPresentationSkill();
+            return HasSkillTag(skill, AFTERIMAGE_SKILL_TAG);
         }
 
         internal bool HasSkillActionPresentation()

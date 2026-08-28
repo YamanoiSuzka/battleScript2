@@ -41,6 +41,25 @@ namespace Yukar.Battle
         internal List<BattleActor> friends = new List<BattleActor>(Party.MAX_PARTY);
         internal List<BattleActor> enemies = new List<BattleActor>(Party.MAX_PARTY);
         internal List<MapCharacter> extras = new List<MapCharacter>();
+        private sealed class SkillAfterimage
+        {
+            internal MapCharacter mapChr;
+            internal float age;
+            internal Vector3 position;
+            internal Vector3 rotation;
+            internal Vector3 scale;
+            internal float directionRadian;
+        }
+        private const float SKILL_AFTERIMAGE_INTERVAL = 3.0f;
+        private const float SKILL_AFTERIMAGE_LIFETIME = 15.0f;
+        private const float SKILL_AFTERIMAGE_INITIAL_OPACITY = 0.8f;
+        private const int SKILL_AFTERIMAGE_MAX_COUNT = 2;
+        private const int SKILL_AFTERIMAGE_MAX_SYNC_FRAMES = 120;
+        private const float SKILL_AFTERIMAGE_MIN_MOVE_DISTANCE_SQUARED = 0.01f;
+        private readonly List<SkillAfterimage> skillAfterimages = new List<SkillAfterimage>(SKILL_AFTERIMAGE_MAX_COUNT);
+        private BattleActor skillAfterimageSource;
+        private float skillAfterimageSpawnTimer;
+        private Vector3? lastSkillAfterimagePosition;
         private SharpKmyGfx.ParticleInstance[] turnChr = new SharpKmyGfx.ParticleInstance[Party.MAX_PARTY];
         private EffectDrawerBase reflectionEffect = new EffectDrawer();
         internal List<BattleActor> reflectionEffectTarget = new List<BattleActor>(Party.MAX_PARTY);
@@ -872,6 +891,7 @@ namespace Yukar.Battle
 
         internal void finalize()
         {
+            ClearSkillAfterimages();
             ui.finalize();
 
             for (int i = 0; i < turnChr.Length; i++)
@@ -2477,6 +2497,7 @@ namespace Yukar.Battle
             }
 
             UpdateBattleActors(enemies, angleY, false);
+            UpdateSkillAfterimages(angleY);
 
             // バトルステートに応じてカメラを動かす
             // Move camera according to battle state
@@ -3202,6 +3223,164 @@ namespace Yukar.Battle
             }
         }
 
+        private void UpdateSkillAfterimages(float angleY)
+        {
+            var delta = GameMain.getRelativeParam60FPS();
+            for (int i = skillAfterimages.Count - 1; i >= 0; i--)
+            {
+                var afterimage = skillAfterimages[i];
+                afterimage.age += delta;
+                if (afterimage.age >= SKILL_AFTERIMAGE_LIFETIME)
+                {
+                    afterimage.mapChr.Reset();
+                    skillAfterimages.RemoveAt(i);
+                    continue;
+                }
+
+                var opacity = SKILL_AFTERIMAGE_INITIAL_OPACITY *
+                    (1.0f - afterimage.age / SKILL_AFTERIMAGE_LIFETIME);
+                ApplySkillAfterimageTransform(afterimage);
+                afterimage.mapChr.setOpacityMultiplier(opacity);
+            }
+
+            var actor = owner.ShouldShowSkillAfterimages() ? searchFromActors(owner.activeCharacter) : null;
+            var canSpawn = actor?.mapChr != null &&
+                actor.mapChr.isBillboard() &&
+                actor.getActorState() == BattleActor.ActorStateType.SKILL;
+            if (!canSpawn)
+            {
+                skillAfterimageSource = null;
+                skillAfterimageSpawnTimer = 0;
+                lastSkillAfterimagePosition = null;
+                return;
+            }
+
+            if (skillAfterimageSource != actor)
+            {
+                skillAfterimageSource = actor;
+                skillAfterimageSpawnTimer = SKILL_AFTERIMAGE_INTERVAL;
+                lastSkillAfterimagePosition = null;
+            }
+            else
+            {
+                skillAfterimageSpawnTimer += delta;
+            }
+
+            while (skillAfterimageSpawnTimer >= SKILL_AFTERIMAGE_INTERVAL)
+            {
+                skillAfterimageSpawnTimer -= SKILL_AFTERIMAGE_INTERVAL;
+                CreateSkillAfterimage(actor, angleY);
+            }
+        }
+
+        private void CreateSkillAfterimage(BattleActor actor, float angleY)
+        {
+            var graphic = actor.mapChr.getGraphic() as Common.Resource.GfxResourceBase;
+            if (graphic == null)
+                return;
+
+            var position = actor.mapChr.getPosition();
+            if (lastSkillAfterimagePosition.HasValue)
+            {
+                var lastPosition = lastSkillAfterimagePosition.Value;
+                var dx = position.X - lastPosition.X;
+                var dz = position.Z - lastPosition.Z;
+                if (dx * dx + dz * dz < SKILL_AFTERIMAGE_MIN_MOVE_DISTANCE_SQUARED)
+                    return;
+            }
+
+            if (skillAfterimages.Count >= SKILL_AFTERIMAGE_MAX_COUNT)
+            {
+                var oldest = skillAfterimages.OrderByDescending(x => x.age).First();
+                oldest.mapChr.Reset();
+                skillAfterimages.Remove(oldest);
+            }
+
+            var afterimage = new MapCharacter(null);
+            afterimage.guId = Guid.NewGuid();
+            afterimage.ChangeGraphic(graphic, null);
+            if (!afterimage.isBillboard())
+            {
+                afterimage.Reset();
+                return;
+            }
+
+            afterimage.setDisplayID(Common.Util.BATTLE3DDISPLAYID);
+            afterimage.getMapBillboard().setDisplayID(Common.Util.BATTLE3DDISPLAYID);
+            afterimage.setBlend(SharpKmyGfx.BLENDTYPE.kPREMULTIPLIED);
+            afterimage.ChangeColor(255, 255, 255, 255);
+
+            if (!PlaySkillAfterimageMotion(afterimage, actor))
+            {
+                afterimage.Reset();
+                return;
+            }
+            CopySkillAfterimageTransform(afterimage, actor.mapChr);
+
+            // 同じモーションを現在位置まで進めてから停止し、生成時の姿勢を残す。
+            // Advance the same motion to the user's current point, then pause it as a snapshot.
+            var syncFrames = Math.Min(SKILL_AFTERIMAGE_MAX_SYNC_FRAMES,
+                Math.Max(0, (int)Math.Floor(actor.getActorStateCount())));
+            for (int i = 0; i < syncFrames; i++)
+                afterimage.Update(mapDrawer, angleY, false);
+            afterimage.pause();
+
+            CopySkillAfterimageTransform(afterimage, actor.mapChr);
+            afterimage.setOpacityMultiplier(SKILL_AFTERIMAGE_INITIAL_OPACITY);
+            afterimage.setVisibility(true);
+
+            var skillAfterimage = new SkillAfterimage()
+            {
+                mapChr = afterimage,
+                age = 0,
+                position = position,
+                rotation = actor.mapChr.getRotation(),
+                scale = actor.mapChr.getScale(),
+                directionRadian = actor.mapChr.getDirectionRadian(),
+            };
+            ApplySkillAfterimageTransform(skillAfterimage);
+            skillAfterimages.Add(skillAfterimage);
+            lastSkillAfterimagePosition = position;
+        }
+
+        private static void ApplySkillAfterimageTransform(SkillAfterimage afterimage)
+        {
+            afterimage.mapChr.setPosition(afterimage.position);
+            afterimage.mapChr.setRotation(afterimage.rotation);
+            afterimage.mapChr.setScale(afterimage.scale);
+            afterimage.mapChr.setDirectionFromRadian(afterimage.directionRadian);
+        }
+
+        private static void CopySkillAfterimageTransform(MapCharacter destination, MapCharacter source)
+        {
+            destination.setPosition(source.getPosition());
+            destination.setRotation(source.getRotation());
+            destination.setScale(source.getScale());
+            destination.setDirectionFromRadian(source.getDirectionRadian());
+        }
+
+        private static bool PlaySkillAfterimageMotion(MapCharacter afterimage, BattleActor actor)
+        {
+            // nowMotion は代替モーション解決後、実際に再生中の名前を保持している。
+            // nowMotion stores the motion name actually playing after fallback resolution.
+            var currentMotion = actor.mapChr.nowMotion;
+            if (string.IsNullOrEmpty(currentMotion) || !afterimage.contains2dMotion(currentMotion))
+                return false;
+
+            afterimage.playMotion(currentMotion);
+            return true;
+        }
+
+        private void ClearSkillAfterimages()
+        {
+            foreach (var afterimage in skillAfterimages)
+                afterimage.mapChr.Reset();
+            skillAfterimages.Clear();
+            skillAfterimageSource = null;
+            skillAfterimageSpawnTimer = 0;
+            lastSkillAfterimagePosition = null;
+        }
+
         internal bool isActiveCharacterReady()
         {
             // Attackが予備動作まで済んでいるか調べる
@@ -3524,6 +3703,12 @@ namespace Yukar.Battle
         /// <param name="scn"></param>
         private void drawCharacters(SharpKmyGfx.Render scn)
         {
+            foreach (var afterimage in skillAfterimages)
+            {
+                ApplySkillAfterimageTransform(afterimage);
+                afterimage.mapChr.draw(scn);
+            }
+
             foreach (var mapChr in friends)
             {
                 if (mapChr == null)
@@ -3877,6 +4062,8 @@ namespace Yukar.Battle
 
         internal void reset()
         {
+            ClearSkillAfterimages();
+
             // マップを破棄
             // discard map
             if (battleMapDrawer != null)
