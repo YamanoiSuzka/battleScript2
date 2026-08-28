@@ -124,6 +124,9 @@ namespace Yukar.Battle
         private MapCharacterMoveMacro clearOnCompleteRangePosTweener;
         public string lastMotion;
         private const float MOVE_SPEED = 0.1f;
+        private float skillEndMotionHoldDuration;
+        private float skillEndMotionHoldCount;
+        private bool isSkillEndMotionPaused;
 
         public static BattleActor GenerateFriend(Common.Catalog catalog, Common.GameData.Hero chr, int count, int max)
         {
@@ -389,6 +392,29 @@ namespace Yukar.Battle
             // MapCharacter.Update より前に適用し、3Dモデルの描画座標へ同期させる。
             mapChr.Update(drawer, yangle, isLockDirection);
 
+            // 指定されたスキルだけ、モーション終了姿勢を所定時間保持する。
+            if (state.type == ActorStateType.SKILL && skillEndMotionHoldDuration > 0)
+            {
+                if (!isSkillEndMotionPaused && mapChr.isChangeMotionAvailable())
+                {
+                    mapChr.pause();
+                    isSkillEndMotionPaused = true;
+                    skillEndMotionHoldCount = 0;
+                }
+
+                if (isSkillEndMotionPaused)
+                {
+                    skillEndMotionHoldCount += GameMain.getRelativeParam60FPS();
+                    if (skillEndMotionHoldCount >= skillEndMotionHoldDuration)
+                    {
+                        mapChr.resume();
+                        isSkillEndMotionPaused = false;
+                        skillEndMotionHoldDuration = 0;
+                        skillEndMotionHoldCount = 0;
+                    }
+                }
+            }
+
             // 被弾時の点滅時間
             if (damageFlashTimer > 0) {
                 damageFlashTimer = Math.Max(0, damageFlashTimer - GameMain.getRelativeParam60FPS());
@@ -497,6 +523,16 @@ namespace Yukar.Battle
 
             var nowState = this.state.type;
             var nowOption = this.state.option;
+
+            if (nowState == ActorStateType.SKILL && state.type != ActorStateType.SKILL)
+            {
+                if (isSkillEndMotionPaused)
+                    mapChr.resume();
+                isSkillEndMotionPaused = false;
+                skillEndMotionHoldDuration = 0;
+                skillEndMotionHoldCount = 0;
+            }
+
             this.state = state;
             stateCount = 0;
 
@@ -928,6 +964,13 @@ namespace Yukar.Battle
             return stateCount;
         }
 
+        internal void holdSkillEndMotion(float duration)
+        {
+            skillEndMotionHoldDuration = Math.Max(0, duration);
+            skillEndMotionHoldCount = 0;
+            isSkillEndMotionPaused = false;
+        }
+
         internal bool sourceEqual(Guid guid)
         {
             var grp = Guid.Empty;
@@ -1007,7 +1050,8 @@ namespace Yukar.Battle
 
         internal bool isReady()
         {
-            return stateCount >= state.wait && mapChr.moveMacros.Count == 0;
+            return stateCount >= state.wait && mapChr.moveMacros.Count == 0 &&
+                !(state.type == ActorStateType.SKILL && skillEndMotionHoldDuration > 0);
         }
 
         internal Vector3 getRangePos()

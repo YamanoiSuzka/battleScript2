@@ -6614,7 +6614,7 @@ namespace Yukar.Battle
             }
         }
 
-        private bool IsNormalAttackSkillCommand()
+        internal bool IsNormalAttackSkillCommand()
         {
             if (activeCharacter?.selectedBattleCommandType != BattleCommandType.SameSkillEffect)
                 return false;

@@ -2927,6 +2927,9 @@ namespace Yukar.Battle
                             if (motion == "%%USE_ATTACK_MOTION")
                                 motion = GetAttackMotion(self, "attack");
 
+                            if (skipActivationPresentation && owner.IsNormalAttackSkillCommand())
+                                actor.holdSkillEndMotion(20);
+
                             actor.queueActorState(BattleActor.ActorStateType.SKILL_WAIT);
                             actor.queueActorState(BattleActor.ActorStateType.SKILL, motion, 0, () =>
                             {
