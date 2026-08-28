@@ -2923,6 +2923,7 @@ namespace Yukar.Battle
                         if (start)
                         {
                             var skipActivationPresentation = owner.ShouldSkipSkillActivationPresentation();
+                            var synchronizeEffect = owner.ShouldSynchronizeSkillEffect();
                             var motion = self.selectedSkill.option.motion;
                             if (motion == "%%USE_ATTACK_MOTION")
                                 motion = GetAttackMotion(self, "attack");
@@ -2930,7 +2931,7 @@ namespace Yukar.Battle
                             if (skipActivationPresentation && owner.IsNormalAttackSkillCommand())
                                 actor.holdSkillEndMotion(20);
 
-                            actor.queueActorState(BattleActor.ActorStateType.SKILL_WAIT);
+                            actor.queueActorState(BattleActor.ActorStateType.SKILL_WAIT, "", synchronizeEffect ? 20 : 0);
                             actor.queueActorState(BattleActor.ActorStateType.SKILL, motion, 0, () =>
                             {
                                 if (actor.frontDir > 0 && !skipActivationPresentation)
@@ -3220,8 +3221,8 @@ namespace Yukar.Battle
                         break;
                     case BattleCommandType.Skill:
                     case BattleCommandType.SameSkillEffect:
-                        if (owner.ShouldSkipSkillActivationPresentation() &&
-                            owner.HasSkillActionPresentation() &&
+                        if ((owner.ShouldSynchronizeSkillEffect() ||
+                            (owner.ShouldSkipSkillActivationPresentation() && owner.HasSkillActionPresentation())) &&
                             actor.getActorState() != BattleActor.ActorStateType.SKILL)
                         {
                             return false;

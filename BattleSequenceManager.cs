@@ -52,6 +52,12 @@ namespace Yukar.Battle
         // このタグを持つ直接指定スキルは、通常攻撃としてメッセージを表示する。
         // Directly assigned skills with this tag use the normal-attack message.
         private const string NORMAL_ATTACK_SKILL_TAG = "通常攻撃";
+        // このタグを持つスキルは、発動から20フレーム後にモーションを開始し、効果表示を同期する。
+        // Skills with this tag start their motion 20 frames after activation and synchronize the effect display.
+        private const string SYNCHRONIZE_EFFECT_SKILL_TAG = "エフェクト同期";
+        // このタグを持つスキルは、発動時の待機を20フレームに固定し、カメラ終了を待たない。
+        // Skills with this tag use a fixed 20-frame activation wait and do not wait for the camera to finish.
+        private const string SHORTEN_PRESENTATION_SKILL_TAG = "短縮";
         // このタグを持つスキルは、命中した対象のCTBゲージを後退させる。
         // Skills with this tag push back the CTB gauge of affected targets.
         private const string CTB_STUN_SKILL_TAG = "ctb_stun";
@@ -6576,6 +6582,12 @@ namespace Yukar.Battle
             return HasSkillTag(skill, SKIP_ACTIVATION_PRESENTATION_SKILL_TAG);
         }
 
+        internal bool ShouldSynchronizeSkillEffect()
+        {
+            var skill = GetActivationPresentationSkill();
+            return HasSkillTag(skill, SYNCHRONIZE_EFFECT_SKILL_TAG);
+        }
+
         internal bool HasSkillActionPresentation()
         {
             var skill = GetActivationPresentationSkill();
@@ -6720,13 +6732,24 @@ namespace Yukar.Battle
 
         private void UpdateBattleState_DisplayMessageText()
         {
-            var isMeleeAttack = HasSkillTag(GetActivationPresentationSkill(), "近接攻撃");
-            var isPresentationWaitFinished = isMeleeAttack
+            if (ShouldSynchronizeSkillEffect())
+            {
+                // モーション側も20フレーム待機させているため、実際にSKILLへ入ったことを確認して
+                // カメラの進行状況にかかわらず効果処理へ進める。
+                if (battleStateFrameCount >= 20 && isReadyActor())
+                {
+                    ChangeBattleState(BattleState.ExecuteBattleCommand);
+                }
+                return;
+            }
+
+            var shortenPresentation = HasSkillTag(GetActivationPresentationSkill(), SHORTEN_PRESENTATION_SKILL_TAG);
+            var isPresentationWaitFinished = shortenPresentation
                 ? battleStateFrameCount > 20
                 : battleStateFrameCount > 20 || battleViewer.HasNoMessageWindow() ||
                     Input.KeyTest(Input.StateType.TRIGGER, Input.KeyStates.DECIDE, Input.GameState.MENU);
 
-            if (isPresentationWaitFinished && (isMeleeAttack || isReady3DCamera()) && isReadyActor())
+            if (isPresentationWaitFinished && (shortenPresentation || isReady3DCamera()) && isReadyActor())
             {
                 ChangeBattleState(BattleState.ExecuteBattleCommand);
             }
