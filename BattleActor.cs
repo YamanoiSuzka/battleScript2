@@ -128,6 +128,40 @@ namespace Yukar.Battle
         private float skillEndMotionHoldCount;
         private bool isSkillEndMotionPaused;
 
+        // 行動時の「一歩前進」中かどうかは rangePos(前進前=戻るべきホーム位置)の有無で判断する。
+        // 
+        // 前進中に整列処理(MovePlayerPosition)でホーム位置へ引き戻されると、後続の相対後退で
+        // 
+        // 1マス下がりすぎてしまうため、relocateForActiveStep で戻り先を更新しつつ前進ぶん前に置く。
+        // 
+        internal bool IsSteppedForward => rangePos.HasValue;
+
+        /// <summary>
+        /// 「一歩前進」で進む方向のオフセット(長さ1)を返す。前進・後退に使うのと同じ向きで計算する。
+        /// 
+        /// </summary>
+        private Vector3 getForwardStepOffset()
+        {
+            var rad = MapCharacter.convertDirectionToRadian(ScriptRunner.calcDirImpl(0, frontDir));
+            return new Vector3((float)Math.Sin(rad), 0, (float)Math.Cos(rad));
+        }
+
+        /// <summary>
+        /// 前進中(rangePos保持中)のアクターを整列させる。戻るべきホーム位置(rangePos)を新しい整列位置に
+        /// 
+        /// 更新し、見た目は前進ぶんだけ前へ置く。これにより行動終了時の相対後退で新ホームに正しく戻る。
+        /// 
+        /// </summary>
+        internal void relocateForActiveStep(float x, float z)
+        {
+            var ofs = getForwardStepOffset();
+            rangePos = new Vector3(x, mapChr.pos.Y, z);
+            // 整列移動の完了で rangePos を自動クリアさせない(前進状態は行動終了まで保持する)
+            // 
+            clearOnCompleteRangePosTweener = null;
+            walk(x + ofs.X, z + ofs.Z);
+        }
+
         public static BattleActor GenerateFriend(Common.Catalog catalog, Common.GameData.Hero chr, int count, int max)
         {
             var result = new BattleActor();
@@ -245,6 +279,7 @@ namespace Yukar.Battle
             mapChr.hide = MapCharacter.HideCauses.NONE;
             mapChr.fixHeight = false;
             stateQueue.Clear();
+            rangePos = null;
             queueActorState(ActorStateType.WAIT);
             //state.type = ActorStateType.WAIT;
             //playMotion("wait");
@@ -263,88 +298,35 @@ namespace Yukar.Battle
 
         private bool playMotion(string motion, MapCharacter chr, SharpKmyGfx.ModelInstance mdl)
         {
-            if (chr != null)
-                mdl = chr.getModelInstance();
-
-            if (mdl != null)   // 3Dモデルがある時 / When you have a 3D model
+            // グラフィック種別(3Dモデル / 2D / Live2D)ごとの判定は MapCharacter.containsMotion() が
+            // 
+            // 吸収するので、ここでは種別を意識しない。見つかったら普通に再生し、
+            // 
+            // 見つからなかったら代替モーションを順に試す。
+            // 
+            while (true)
             {
-                // 見つかったら普通に再生する
-                // If found, play normally
-                if (mdl.containsMotion(motion))
+                if (chr != null)
                 {
-                    chr.playMotion(motion);
-                    return true;
-                }
-
-                // モーションが見つからなかったら、代替モーションを再生する
-                // If no motion found, play alternate motion
-                while (true)
-                {
-                    if (mdl.containsMotion(motion))
+                    if (chr.containsMotion(motion))
                     {
                         chr.playMotion(motion);
                         return true;
                     }
-                    else
-                    {
-                        if (!substitudeMotionDic.ContainsKey(motion))
-                            break;
-                        motion = substitudeMotionDic[motion];
-                    }
                 }
-            }
-            else if (chr != null && (chr.isBillboard() || chr.isSprite())) // 2Dの時 / 2D time
-            {
-                // 見つかったら普通に再生する
-                // If found, play normally
-                if (chr.contains2dMotion(motion))
+                else if (mdl != null && mdl.containsMotion(motion))
                 {
-                    chr.playMotion(motion);
+                    // MapCharacter を伴わないモデル単体指定
+                    // 
+                    mdl.playMotion(motion, 0.2f);
                     return true;
                 }
 
-                // モーションが見つからなかったら、代替モーションを再生する
-                // If no motion found, play alternate motion
-                while (true)
-                {
-                    if (chr.contains2dMotion(motion))
-                    {
-                        chr.playMotion(motion);
-                        return true;
-                    }
-                    else
-                    {
-                        if (!substitudeMotionDic.ContainsKey(motion))
-                            break;
-                        motion = substitudeMotionDic[motion];
-                    }
-                }
-            }
-            else if (chr != null && chr.isLive2D()) // Live2Dの時 / At the time of Live2D
-            {
-                var live2d = chr.getMapLive2D();
-                if (live2d != null)
-                {
-                    // モーションが見つかったら普通に再生する。見つからなかったら代替モーションを再生する。
-                    // If a motion is found, play it normally.
-                    while (true)
-                    {
-                        if (live2d.containsMotion(motion))
-                        {
-                            chr.playMotion(motion);
-                            return true;
-                        }
-                        else
-                        {
-                            if (!substitudeMotionDic.ContainsKey(motion))
-                                break;
-                            motion = substitudeMotionDic[motion];
-                        }
-                    }
-                }
-            }
+                if (!substitudeMotionDic.ContainsKey(motion))
+                    return false;
 
-            return false;
+                motion = substitudeMotionDic[motion];
+            }
         }
 
         internal void walk(float x, float z, bool setRangePos = false)
@@ -654,6 +636,7 @@ namespace Yukar.Battle
                     // source.CurrentDamageEquipmentIndex == 0 to exclude the second double-wielding attack
                     if (source.isUseWalkInAttack() && source.CurrentDamageEquipmentIndex == 0)
                     {
+                        rangePos = mapChr.pos;
                         MapCharacterMoveMacro.addSimpleXZTweener(mapChr, ScriptRunner.calcDirImpl(0, frontDir), MOVE_SPEED, () => playMotion("wait"));
                         playMotion("battle_walk");
                     }
@@ -666,6 +649,7 @@ namespace Yukar.Battle
                 case ActorStateType.ATTACK:// 攻撃時 / when attacking
                     if (!source.isUseWalkInAttack() && source.isMovableToForward(true) && source.CurrentDamageEquipmentIndex == 0)
                     {
+                        rangePos = mapChr.pos;
                         MapCharacterMoveMacro.addSimpleXZTweener(mapChr, ScriptRunner.calcDirImpl(0, frontDir), MOVE_SPEED);
                     }
 
@@ -677,6 +661,7 @@ namespace Yukar.Battle
                 case ActorStateType.ATTACK_END:// 攻撃終了時 / End of attack
                     if (source.isMovableToForward(true))
                     {
+                        rangePos = null;
                         MapCharacterMoveMacro.addSimpleXZTweener(mapChr, ScriptRunner.calcDirImpl(0, -frontDir), MOVE_SPEED,
                             () => { if (nowState != ActorStateType.KO) playWaitMotion(); });
 
@@ -697,6 +682,7 @@ namespace Yukar.Battle
                 case ActorStateType.ITEM_END:
                     if (source.isMovableToForward())
                     {
+                        rangePos = null;
                         MapCharacterMoveMacro.addSimpleXZTweener(mapChr, ScriptRunner.calcDirImpl(0, -frontDir), MOVE_SPEED,
                             () => { if (nowState != ActorStateType.KO) playWaitMotion(); });
 
@@ -716,6 +702,7 @@ namespace Yukar.Battle
                 case ActorStateType.SKILL_WAIT:// スキル待ち / waiting for skill
                     if (source.isMovableToForward())
                     {
+                        rangePos = mapChr.pos;
                         MapCharacterMoveMacro.addSimpleXZTweener(mapChr, ScriptRunner.calcDirImpl(0, frontDir), MOVE_SPEED);
                         playMotion("battle_walk");
                     }
@@ -734,6 +721,7 @@ namespace Yukar.Battle
                 case ActorStateType.ITEM:// 攻撃時 / when attacking
                     if (source.isMovableToForward())
                     {
+                        rangePos = mapChr.pos;
                         MapCharacterMoveMacro.addSimpleXZTweener(mapChr, ScriptRunner.calcDirImpl(0, frontDir), MOVE_SPEED);
                     }
                     if (playMotion("item"))

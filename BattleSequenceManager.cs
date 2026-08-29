@@ -224,7 +224,11 @@ namespace Yukar.Battle
         {
             get
             {
-                var idx = playerData.IndexOf(playerData.Find(player => player.IsAnyCommandSelectable));
+                // オートバトル(IsUseBattleAI)はコマンド選択を行わないため、
+                // 
+                // 「最初にコマンド選択するメンバー」(逃げる/戻るの出し分け)の対象からも除外する
+                // 
+                var idx = playerData.IndexOf(playerData.Find(player => player.IsAnyCommandSelectable && !player.IsUseBattleAI));
 
                 if (idx < 0)
                 {
@@ -239,12 +243,15 @@ namespace Yukar.Battle
 
         bool IsDisabledEscape => playerData.Any(player => player.IsDisabledEscape);
 
+        // このバトルから逃走できるかどうか(「逃げる」コマンドをゲーム定義で表示するかどうかは考慮しない)
+        // 
+        internal bool CanEscape => escapeAvailable && !IsDisabledEscape;
+
         BackGroundStyle backGroundStyle;
         Color backGroundColor;
         Common.Resource.Texture backGroundImageId = null;//#23959-1
                                                          //ModifiedModelInstance backGroundModel;
 
-        internal TweenFloat statusUpdateTweener;
         TweenListManager<float, TweenFloat> openingBackgroundImageScaleTweener;
 
         Random battleRandom;
@@ -300,7 +307,6 @@ namespace Yukar.Battle
 
             iconTable = new Dictionary<Guid, Common.Resource.Texture>();
 
-            statusUpdateTweener = new TweenFloat();
             fadeScreenColorTweener = new TweenColor();
             openingBackgroundImageScaleTweener = new TweenListManager<float, TweenFloat>();
 
@@ -695,7 +701,20 @@ namespace Yukar.Battle
 
                 var actor = Viewer.searchFromActors(player);
 
-                actor?.walk(position.X, position.Z, true);
+                // 行動中で「一歩前進」しているアクター(rangePos保持中)は、整列先もその前進ぶんだけ前にしておく。
+                // 
+                // そうしないと一旦ホーム位置へ引き戻され、行動終了時の相対後退で1マス下がりすぎてしまう
+                // 
+                // (スキル効果の共通イベントでパーティから外した時などに発生)。
+                // 
+                if (actor != null && actor.IsSteppedForward)
+                {
+                    actor.relocateForActiveStep(position.X, position.Z);
+                }
+                else
+                {
+                    actor?.walk(position.X, position.Z, true);
+                }
 
                 player.calcHeroLayout(playerData.Count);
             }
@@ -830,7 +849,7 @@ namespace Yukar.Battle
 
             data.monster = monster;
             data.EscapeSuccessBasePercent = 100;
-            data.EscapeSuccessMessage = string.Format(gameSettings.glossary.battle_enemy_escape, monster.name);
+            data.EscapeSuccessMessage = Common.Util.formatSafely(gameSettings.glossary.battle_enemy_escape, monster.name);
             data.ExecuteCommandTurnCount = 1;
             data.image = monsterRes;
             data.imageId = tex;
@@ -2617,7 +2636,7 @@ namespace Yukar.Battle
 							}
 
                             // 追加ダメージのみの時でもクリティカルではない時に0表示を出させるため、0をセット
-                            // Set 0 to display 0 when there is only additional damage but not critical.
+                            // 
 							enemySkillFormulaListDic[kv.Key].Add(isCritical ? kv.Value : "0");
 						}
 
@@ -2670,7 +2689,7 @@ namespace Yukar.Battle
                             var heal = effectValue < 0;
 
                             // HP吸収ダメージの場合は相手の最大値を考慮する
-                            // In the case of HP absorption damage, consider the opponent's maximum value.
+                            // 
                             if (!heal && enemySkillDrainPercentDic.ContainsKey(info.ConsumptionId))
                             {
                                 effectValue = Math.Min(effectValue, target.consumptionStatusValue.GetStatus(item.Key));
@@ -3096,7 +3115,7 @@ namespace Yukar.Battle
 			if ((friendSkillDrainPercentDic.Count > 0) || (enemySkillDrainPercentDic.Count > 0))
             {
                 // 数値表示用に分ける
-                // Separate for numerical display
+                // 
 				var totalFriendDamageDic = new Dictionary<Guid, int>();
 				var totalEnemyDamageDic = new Dictionary<Guid, int>();
 
@@ -3277,7 +3296,7 @@ namespace Yukar.Battle
         private void conditionAssignImpl(List<Rom.ConditionInfo> list, BattleCharacterBase target, ref bool isEffect, ref bool isDisplayMiss)
         {
             // 変更前の「最も優先すべき状態変化モーション」を控えておく
-            // Make a note of the \
+            // 
             var prevConditionMotion = (target != null ? Viewer.searchFromActors(target) : null)?.getConditionMotion();
 
             foreach (var info in list)
@@ -3335,15 +3354,15 @@ namespace Yukar.Battle
             }
 
             // 行動済みの場合、状態のモーションを反映させる
-            // If the action has been taken, reflect the state motion
+            // 
             if (isEffect && (target != null) && (target.selectedBattleCommandType == BattleCommandType.Nothing))
             {
                 var actor = Viewer.searchFromActors(target);
 
                 // 最も優先すべき状態変化モーションが変化した時だけ反映する(nullへの変化=全解除を含む)。
-                // Reflects only when the most prioritized state change motion changes (including change to null = complete cancellation).
+                // 
                 // 変化のない状態変更で、イベント等で再生中のモーションを上書きしないため。
-                // This is because a motion that is being played due to an event, etc. is not overwritten by a state change that does not change.
+                // 
                 if (actor != null && actor.getConditionMotion() != prevConditionMotion)
                     actor.playWaitMotion();
             }
@@ -3855,6 +3874,12 @@ namespace Yukar.Battle
 
             player.nextStatusData.MaxHitPoint = player.MaxHitPoint;
             player.nextStatusData.MaxMagicPoint = player.MaxMagicPoint;
+
+            // このキャラクター専用の進行度をリセットする。他キャラのステータス変化に巻き込まれて
+            // 
+            // アニメ表示中の値が開始値まで巻き戻ることがないよう、共有タイマーは使わない。
+            // 
+            player.statusUpdateTweener.Begin(0, 1.0f, 30);
         }
 
         internal bool UpdateBattleStatusData(BattleCharacterBase player)
@@ -3874,7 +3899,7 @@ namespace Yukar.Battle
 
 					if (now != next)
 					{
-                        nowConsumptionStatusValue.SetStatus(info.guId, (int)((next - start) * statusUpdateTweener.CurrentValue + start));
+                        nowConsumptionStatusValue.SetStatus(info.guId, (int)((next - start) * player.statusUpdateTweener.CurrentValue + start));
 
                         isUpdated = true;
                     }
@@ -3883,16 +3908,21 @@ namespace Yukar.Battle
 
             if (player.battleStatusData.HitPoint != player.nextStatusData.HitPoint)
             {
-                player.battleStatusData.HitPoint = (int)((player.nextStatusData.HitPoint - player.startStatusData.HitPoint) * statusUpdateTweener.CurrentValue + player.startStatusData.HitPoint);
+                player.battleStatusData.HitPoint = (int)((player.nextStatusData.HitPoint - player.startStatusData.HitPoint) * player.statusUpdateTweener.CurrentValue + player.startStatusData.HitPoint);
 
                 isUpdated = true;
             }
 
             if (player.battleStatusData.MagicPoint != player.nextStatusData.MagicPoint)
             {
-                player.battleStatusData.MagicPoint = (int)((player.nextStatusData.MagicPoint - player.startStatusData.MagicPoint) * statusUpdateTweener.CurrentValue + player.startStatusData.MagicPoint);
+                player.battleStatusData.MagicPoint = (int)((player.nextStatusData.MagicPoint - player.startStatusData.MagicPoint) * player.statusUpdateTweener.CurrentValue + player.startStatusData.MagicPoint);
 
                 isUpdated = true;
+            }
+
+            if (isUpdated)
+            {
+                player.statusUpdateTweener.Update();
             }
 
             return isUpdated;
@@ -4589,7 +4619,7 @@ namespace Yukar.Battle
         private void UpdateBattleState_DisplayTurnRecoveryStatus()
         {
             if (string.IsNullOrEmpty(battleViewer.displayMessageText) ||
-                battleStateFrameCount >= 30 || Input.KeyTest(Input.StateType.TRIGGER, Input.KeyStates.DECIDE, Input.GameState.MENU))
+                battleStateFrameCount >= gameSettings.BattleMessageDisplayTime * 60 || Input.KeyTest(Input.StateType.TRIGGER, Input.KeyStates.DECIDE, Input.GameState.MENU))
             {
                 recoveryStatusInfo.RemoveAt(0);
 
@@ -4630,6 +4660,7 @@ namespace Yukar.Battle
             else
             {
                 var setConditionBattleCommandType = false;
+                var useBattleAI = false;
 
                 foreach (var e in commandSelectPlayer.conditionInfoDic)
                 {
@@ -4642,7 +4673,19 @@ namespace Yukar.Battle
                             commandSelectPlayer.selectedBattleCommandType = BattleCommandType.Nothing;
 
                             setConditionBattleCommandType = true;
+                            // 行動不能が最優先。バトルAI利用/自動攻撃より優先させる
+                            // 
+                            useBattleAI = false;
                             break;
+                        }
+                        else if (condition.IsUseBattleAI)
+                        {
+                            // オートバトル: コマンド選択を行わず、キャストの行動AIで行動を決定する
+                            // 
+                            useBattleAI = true;
+
+                            // 行動不能が優先なので、ここでは終わらない
+                            // Incapacity is the priority, so it doesn't end here
                         }
                         else if (condition.IsAutoAttack)
                         {
@@ -4656,7 +4699,21 @@ namespace Yukar.Battle
                     }
                 }
 
-                if (setConditionBattleCommandType)
+                if (useBattleAI)
+                {
+                    // オートバトル: 敵と共通の行動AIを味方に適用する。
+                    // 
+                    // 攻撃/スキルの対象は EnemyPartyRefMember / FriendPartyRefMember を
+                    // 
+                    // 参照するため、味方の場合は自動的に敵パーティへ向く。
+                    // 
+                    commandSelectPlayer.selectedBattleCommandType = BattleCommandType.Undecided;
+
+                    SelectEnemyCommand(commandSelectPlayer, false, false);
+
+                    ChangeBattleState(BattleState.SetPlayerBattleCommandTarget);
+                }
+                else if (setConditionBattleCommandType)
                 {
                     ChangeBattleState(BattleState.SetPlayerBattleCommandTarget);
                 }
@@ -4883,9 +4940,11 @@ namespace Yukar.Battle
 
                 // 戻れる？
                 // Can you go back?
+                // オートバトル(IsUseBattleAI)のキャストはコマンド選択を行わないため、戻る対象から除外する
+                // 
                 //for (int index = commandSelectedMemberCount - 1; index >= 0; index--)
                 //{
-                //    if (index < playerData.Count && playerData[index].IsAnyCommandSelectable)
+                //    if (index < playerData.Count && playerData[index].IsAnyCommandSelectable && !playerData[index].IsUseBattleAI)
                 //    {
                 //        isBackCommandSelect = true;
                 //        prevPlayerIndex = index;
@@ -5146,10 +5205,14 @@ namespace Yukar.Battle
         /// <param name="isContinous">continuous action or not</param>
         /// <param name="isCounter">カウンターかどうか</param>
         /// <param name="isCounter">counter or not</param>
-        private void SelectEnemyCommand(BattleEnemyData monsterData, bool isContinous, bool isCounter,
+        private void SelectEnemyCommand(BattleCharacterBase monsterData, bool isContinous, bool isCounter,
             int turn = -1, IEnumerable<Rom.ActionInfo> activeAction = null)
         {
-            monsterData.counterAction = BattleEnemyData.CounterState.NONE;
+            // 行動AIのソースとなるキャスト(敵=monster / 味方=player.rom いずれも Rom.Cast)
+            // 
+            var cast = monsterData.GetSource();
+
+            monsterData.counterAction = BattleCharacterBase.CounterState.NONE;
             monsterData.selectedBattleCommandTags = null;
             monsterData.CurrentDamageEquipmentIndex = 0;
 
@@ -5173,16 +5236,33 @@ namespace Yukar.Battle
 
                 activeAction = SelectEnabledActiveActions(monsterData, activeAction);
 
-                if (activeAction.Count() > 0)
-                {
-                    var executeAction = activeAction.ElementAt(battleRandom.Next(activeAction.Count()));
+                // 習得済みスキル行動は先に最適スキルを採点し、候補がない行動を除外してから行動抽選を行う。
+                // 
+                // これにより、該当カテゴリのスキルがない場合でも同じターンの別行動へフォールバックできる。
+                // 
+                var activeActionList = activeAction.ToList();
+                var learnedSkillSelections = activeActionList
+                    .Where(action => action.type == Rom.ActionType.USE_LEARNED_SKILL)
+                    .ToDictionary(action => action, action => SelectLearnedSkill(monsterData, action));
+                activeActionList.RemoveAll(action => action.type == Rom.ActionType.USE_LEARNED_SKILL && learnedSkillSelections[action] == null);
 
-                    foreach (var action in activeAction)
+                if (activeActionList.Count > 0)
+                {
+                    var executeAction = SelectActionByWeight(activeActionList);
+                    LearnedSkillSelectionResult learnedSkillSelection = null;
+                    if (executeAction.type == Rom.ActionType.USE_LEARNED_SKILL)
+                    {
+                        // 抽選前に計算した結果を再利用し、同じターン内で採点結果が変化しないようにする。
+                        // 
+                        learnedSkillSelection = learnedSkillSelections[executeAction];
+                    }
+
+                    foreach (var action in activeActionList)
                     {
                         if (action == executeAction)
                             continue;
 
-                        if (action.type == Rom.ActionType.SKILL)
+                        if (action.type == Rom.ActionType.SKILL || action.type == Rom.ActionType.USE_LEARNED_SKILL)
                             GameMain.PushLog(DebugDialog.LogEntry.LogType.BATTLE, monsterData.Name,
                                 string.Format("Selectable Action / Skill : {0}", catalog.getItemFromGuid(action.refByAction)?.name ?? "Nothing"));
                         else
@@ -5190,7 +5270,10 @@ namespace Yukar.Battle
                                 string.Format("Selectable Action / Type : {0}", action.type.ToString()));
                     }
 
-                    if (executeAction.type == Rom.ActionType.SKILL)
+                    if (executeAction.type == Rom.ActionType.USE_LEARNED_SKILL)
+                        GameMain.PushLog(DebugDialog.LogEntry.LogType.BATTLE, monsterData.Name,
+                            string.Format("Choiced Action / Skill : {0}", learnedSkillSelection?.Skill?.name ?? "Nothing"));
+                    else if (executeAction.type == Rom.ActionType.SKILL)
                         GameMain.PushLog(DebugDialog.LogEntry.LogType.BATTLE, monsterData.Name,
                             string.Format("Choiced Action / Skill : {0}", catalog.getItemFromGuid(executeAction.refByAction)?.name ?? "Nothing"));
                     else
@@ -5227,7 +5310,7 @@ namespace Yukar.Battle
                         case Rom.ActionType.ATTACK:
                         case Rom.ActionType.CRITICAL:
                         case Rom.ActionType.FORCE_CRITICAL:
-                            foreach (var player in targetPlayerData.Where(target => (target.HitPoint > 0) && IsHitRange(monsterData, target)))
+                            foreach (var player in monsterData.EnemyPartyRefMember.Where(target => (target.HitPoint > 0) && IsHitRange(monsterData, target)))
                             {
                                 monsterData.commandTargetList.Add(player);
                             }
@@ -5254,7 +5337,10 @@ namespace Yukar.Battle
                             break;
 
                         case Rom.ActionType.SKILL:
-                            var skill = (Rom.NSkill)catalog.getItemFromGuid(executeAction.refByAction);
+                        case Rom.ActionType.USE_LEARNED_SKILL:
+                            var skill = executeAction.type == Rom.ActionType.USE_LEARNED_SKILL
+                                ? learnedSkillSelection?.Skill
+                                : catalog.getItemFromGuid(executeAction.refByAction) as Rom.NSkill;
 
                             // スキルが無かったら何もしないよう修正
                             // Fixed to do nothing if there is no skill
@@ -5269,6 +5355,9 @@ namespace Yukar.Battle
                             monsterData.selectedItem = null;
                             monsterData.selectedSkill = skill;
                             monsterData.selectedBattleCommandType = BattleCommandType.Skill;
+                            // 選ばれた実スキルのユーザータグも、通常のスキル使用と同様に行動タグへ引き継ぐ。
+                            // 
+                            monsterData.selectedBattleCommandTags += " " + skill.tags;
 
                             switch (monsterData.selectedSkill.option.target)
                             {
@@ -5276,9 +5365,9 @@ namespace Yukar.Battle
                                 case Rom.TargetType.PARTY_ONE_ENEMY_ALL:
 								case Rom.TargetType.OTHER_ONE:
 
-									foreach (var enemy in targetEnemyData)
+									foreach (var friend in monsterData.FriendPartyRefMember)
                                     {
-                                        monsterData.commandTargetList.Add(enemy);
+                                        monsterData.commandTargetList.Add(friend);
                                     }
 
                                     if (monsterData.selectedSkill.option.target == Rom.TargetType.OTHER_ONE)
@@ -5292,12 +5381,22 @@ namespace Yukar.Battle
                                 case Rom.TargetType.PARTY_ALL_ENEMY_ONE:
                                 case Rom.TargetType.SELF_ENEMY_ONE:
                                 case Rom.TargetType.OTHERS_ENEMY_ONE:
-                                    foreach (var player in targetPlayerData.Where(player => player.HitPoint > 0))
+                                    foreach (var opponent in monsterData.EnemyPartyRefMember.Where(opponent => opponent.HitPoint > 0))
                                     {
-                                        monsterData.commandTargetList.Add(player);
+                                        monsterData.commandTargetList.Add(opponent);
                                     }
 
                                     break;
+                            }
+
+                            // 単体スキルでは採点時に最も有効だった対象へ絞る。
+                            // 
+                            // 行動AIの「対象」列が指定されている場合は、この後の ApplyActionTargetOverride が優先される。
+                            // 
+                            if (learnedSkillSelection?.Target != null && monsterData.commandTargetList.Contains(learnedSkillSelection.Target))
+                            {
+                                monsterData.commandTargetList.Clear();
+                                monsterData.commandTargetList.Add(learnedSkillSelection.Target);
                             }
                             break;
 
@@ -5322,6 +5421,10 @@ namespace Yukar.Battle
                             break;
                     }
 
+                    // 行動AIの「対象」列による対象の上書き
+                    // 
+                    ApplyActionTargetOverride(monsterData, executeAction);
+
                     if (monsterData.commandTargetList.Count > 0)
                     {
                         battleViewer.commandTargetSelector.AddBattleCharacters(monsterData.commandTargetList);
@@ -5339,16 +5442,13 @@ namespace Yukar.Battle
 
                 monsterData.targetCharacter = GetTargetCharacters(monsterData);
 
-                // ターン指定でなければモンスターのアクションを一つ進める
-                // Advance the monster's action by one if it is not a turn designation
+                // ターン指定でなければ共有ターンカウントを一つ進める
+                // 
+                // ※折り返し(剰余)は各AIシート評価時にシートごとの最大ターン数で都度取るため、ここでは折り返さない
+                // 
                 if (turn < 0)
                 {
                     monsterData.ExecuteCommandTurnCount++;
-
-                    if (monsterData.monster.battleActions.Count == 0 || monsterData.ExecuteCommandTurnCount > monsterData.monster.battleActions.Max(act => act.turn))
-                    {
-                        monsterData.ExecuteCommandTurnCount = 1;
-                    }
                 }
             }
             else
@@ -5365,7 +5465,7 @@ namespace Yukar.Battle
         /// <param name="monsterData"></param>
         /// <param name="activeAction"></param>
         /// <returns></returns>
-		private IEnumerable<Rom.ActionInfo> SelectEnabledActiveActions(BattleEnemyData monsterData, IEnumerable<Rom.ActionInfo> activeAction)
+		private IEnumerable<Rom.ActionInfo> SelectEnabledActiveActions(BattleCharacterBase monsterData, IEnumerable<Rom.ActionInfo> activeAction)
 		{
             var list = activeAction.ToList();
 
@@ -5386,6 +5486,51 @@ namespace Yukar.Battle
 		}
 
 		/// <summary>
+		/// 現在成立している行動AIシートを取得する。
+		/// 
+		/// シートリストの先頭から順に「このシートを実行する条件」を評価し、最初に成立したシートを返す（先頭が最優先）。
+		/// 
+		/// 条件が空のシートは常に成立。成立するシートが1つも無ければ null（＝何もしない）。
+		/// 
+		/// </summary>
+		/// <param name="monsterData">対象キャラクター</param>
+		/// <param name="monsterData"></param>
+		/// <returns>成立したAIシート。無ければ null</returns>
+		/// <returns></returns>
+		private Rom.AISheet GetActiveAISheet(BattleCharacterBase monsterData)
+		{
+			// 行動AIのソースとなるキャスト(敵=monster / 味方=player.rom)
+			// 
+			var cast = monsterData.GetSource();
+
+            // 旧データとの互換解決
+            // 
+            cast.EnsureAISheets();
+
+			// AIシート実行条件も行動条件と同じ条件パネル(Event.Condition)を使う。
+			// 
+			// バトル固有条件(HP/MP/レベル/ターン/状態/消費ステータス)は行動キャスト基準で評価するため、
+			// 
+			// 行動条件と同じ evaluateBattleAiConditions を通す。
+			// 
+			int hitPointRate = (int)(monsterData.HitPointPercent * 100);
+			int magicPointRate = (int)(monsterData.MagicPointPercent * 100);
+
+			foreach (var sheet in cast.aiSheets)
+			{
+				// 条件なし＝常時成立。条件ありは行動条件と同じ経路で評価する。
+				// 
+				if (sheet.condList.Count == 0 ||
+					evaluateBattleAiConditions(sheet.condList, monsterData, hitPointRate, magicPointRate))
+				{
+					return sheet;
+				}
+			}
+
+			return null;
+		}
+
+		/// <summary>
 		/// モンスターの現在のターンで有効なアクションの一覧を取得する
 		/// Get a list of valid actions for the monster's current turn
 		/// </summary>
@@ -5393,12 +5538,36 @@ namespace Yukar.Battle
 		/// <param name="isContinous"></param>
 		/// <param name="isCounter"></param>
 		/// <returns></returns>
-		private IEnumerable<Rom.ActionInfo> GetActiveActions(BattleEnemyData monsterData, bool isCounter, int turn = -1)
+		private IEnumerable<Rom.ActionInfo> GetActiveActions(BattleCharacterBase monsterData, bool isCounter, int turn = -1)
         {
+            // 行動AIのソースとなるキャスト(敵=monster / 味方=player.rom)
+            // 
+            var cast = monsterData.GetSource();
+
+            // 現在成立している行動AIシートを取得する（先頭が最優先）。成立するシートが無ければ「何もしない」
+            // 
+            var sheet = GetActiveAISheet(monsterData);
+            if (sheet == null)
+            {
+                GameMain.PushLog(DebugDialog.LogEntry.LogType.BATTLE, monsterData.Name, "No Active AI Sheet (Do Nothing)");
+                return Enumerable.Empty<Rom.ActionInfo>();
+            }
+
+            // 現在成立しているAIラインをバトルログに出力する（どのラインで行動しているか分かるように）
+            // 
+            int activeSheetIndex = cast.aiSheets.IndexOf(sheet) + 1;
+            string activeSheetName = string.IsNullOrEmpty(sheet.name) ? ("AI Sheet " + activeSheetIndex) : sheet.name;
+            GameMain.PushLog(DebugDialog.LogEntry.LogType.BATTLE, monsterData.Name,
+                string.Format("Active AI Sheet : [{0}] {1}", activeSheetIndex, activeSheetName));
+
             int hitPointRate = (int)(monsterData.HitPointPercent * 100);
             int magicPointRate = (int)(monsterData.MagicPointPercent * 100);
 
-            turn = turn > 0 ? turn : monsterData.ExecuteCommandTurnCount;
+            // 共有ターンカウントを、成立シートの最大ターン数で剰余(1..MaxTurn)に丸める
+            // 
+            int rawTurn = turn > 0 ? turn : monsterData.ExecuteCommandTurnCount;
+            int maxTurn = sheet.MaxTurn;   // 1以上 / 
+            turn = ((rawTurn - 1) % maxTurn + maxTurn) % maxTurn + 1;
 
             if (isCounter)
                 GameMain.PushLog(DebugDialog.LogEntry.LogType.BATTLE, monsterData.Name,
@@ -5407,16 +5576,17 @@ namespace Yukar.Battle
                 GameMain.PushLog(DebugDialog.LogEntry.LogType.BATTLE, monsterData.Name,
                     string.Format("Select Action / Turn No. : {0}", turn));
 
-            var actionList = monsterData.monster.battleActions;
+            var actionList = sheet.actions;
             var activeAction = actionList.Where(act => act.turn == turn
-                && checkCondition(act, monsterData, hitPointRate, magicPointRate, isCounter));
+                && checkCondition(act, monsterData, hitPointRate, magicPointRate, isCounter)
+                && IsActionSkillLearned(act, monsterData));
             var removeActions = new List<Rom.ActionInfo>();
 
             // MPが足りないスキルを除外するための関数
             // Function for excluding skills with insufficient MP
             void filter()
             {
-                switch (monsterData.monster.aiPattern)
+                switch (cast.aiPattern)
                 {
                     case Rom.AIPattern.CLEVER:
                     case Rom.AIPattern.TRICKY:
@@ -5462,7 +5632,8 @@ namespace Yukar.Battle
             // If there is no action that can be executed in the current number of turns, select from standard actions (0 turn actions)
             if (activeAction.Count() == 0)
             {
-                activeAction = actionList.Where(act => act.turn == 0 && checkCondition(act, monsterData, hitPointRate, magicPointRate, isCounter));
+                activeAction = actionList.Where(act => act.turn == 0 && checkCondition(act, monsterData, hitPointRate, magicPointRate, isCounter)
+                    && IsActionSkillLearned(act, monsterData));
 
                 // MPが足りないスキルを除外
                 // Exclude skills with insufficient MP
@@ -5472,14 +5643,147 @@ namespace Yukar.Battle
             return activeAction;
         }
 
-        private BattleCharacterBase TargetSelectWithHateRate(IEnumerable<BattleCharacterBase> origList, BattleEnemyData data = null)
+        /// <summary>
+        /// 実行可能な行動の中から「重み」に比例した確率で1つを選ぶ。
+        /// 
+        /// 合計に占める割合が 1% 未満の行動は候補から外すため、重みの桁を大きくすることで
+        /// 
+        /// 実質的に「最優先の行動」を表現できる。重みが全て0のときは均等抽選にフォールバックする。
+        /// 
+        /// </summary>
+        private Rom.ActionInfo SelectActionByWeight(IList<Rom.ActionInfo> actions)
+        {
+            if (actions.Count == 1)
+                return actions[0];
+
+            // 負の重みは0として扱う。
+            // 
+            double total = 0;
+            foreach (var a in actions)
+                total += Math.Max(0, a.weight);
+
+            List<Rom.ActionInfo> candidates;
+            if (total <= 0)
+            {
+                // 全ての重みが0：均等抽選にフォールバック
+                // 
+                candidates = new List<Rom.ActionInfo>(actions);
+            }
+            else
+            {
+                // 合計に占める割合が 1% 以上の行動だけを候補にする（1%未満は選ばれない）。
+                // 
+                candidates = actions.Where(a => Math.Max(0, a.weight) >= total * 0.01).ToList();
+                if (candidates.Count == 0)
+                    candidates = new List<Rom.ActionInfo>(actions);
+            }
+
+            double candTotal = 0;
+            foreach (var a in candidates)
+                candTotal += Math.Max(0, a.weight);
+
+            if (candTotal <= 0)
+                return candidates[battleRandom.Next(candidates.Count)];
+
+            double r = battleRandom.NextDouble() * candTotal;
+            double acc = 0;
+            foreach (var a in candidates)
+            {
+                acc += Math.Max(0, a.weight);
+                if (r < acc)
+                    return a;
+            }
+            return candidates[candidates.Count - 1];
+        }
+
+        /// <summary>
+        /// 行動AI「習得済みスキルを使う」の行動が対象キャストで有効か（習得済みか）を判定する。
+        /// 
+        /// 「習得済みスキルを使う」以外は常に true。
+        /// 
+        /// </summary>
+        private bool IsActionSkillLearned(Rom.ActionInfo action, BattleCharacterBase character)
+        {
+            if (action.type != Rom.ActionType.USE_LEARNED_SKILL)
+                return true;
+
+            return character.Hero?.skills.Any() ?? false;
+        }
+
+        private LearnedSkillSelectionResult SelectLearnedSkill(BattleCharacterBase character, Rom.ActionInfo action)
+        {
+            // 採点で戦闘本番の乱数列を消費しないよう、式評価には固定シードの専用乱数を渡す。
+            // 
+            // アイテム消費可否はバトル本体の既存判定を利用し、実行時との食い違いを防ぐ。
+            // 
+            var selector = new LearnedSkillSelector(
+                gameSettings,
+                (formula, actor, target, attribute) => EvalFormula(formula, actor, target, attribute, new Random(0)),
+                skill => isQualifiedSkillCostItem(character, skill));
+
+            return selector.Select(character, character.Hero?.skills ?? Enumerable.Empty<Rom.NSkill>(), action.learnedSkillSelection);
+        }
+
+        /// <summary>
+        /// 行動AIの「対象」列(自動以外)に応じて行動の対象候補を上書きする。
+        /// 
+        /// 対象を取らない行動(防御/ためる/逃げる/何もしない)には影響しない。
+        /// 
+        /// </summary>
+        private void ApplyActionTargetOverride(BattleCharacterBase self, Rom.ActionInfo action)
+        {
+            if (action.actionTarget == Rom.ActionTargetType.AUTO)
+                return;
+
+            // 対象を取らない行動は上書きしない
+            // 
+            switch (self.selectedBattleCommandType)
+            {
+                case BattleCommandType.Nothing:
+                case BattleCommandType.Charge:
+                case BattleCommandType.Guard:
+                case BattleCommandType.MonsterEscape:
+                    return;
+            }
+
+            self.commandTargetList.Clear();
+            battleViewer.commandTargetSelector.Clear();
+
+            switch (action.actionTarget)
+            {
+                case Rom.ActionTargetType.FRIEND:
+                    self.commandTargetList.AddRange(self.FriendPartyRefMember);
+                    break;
+
+                case Rom.ActionTargetType.ENEMY:
+                    self.commandTargetList.AddRange(self.EnemyPartyRefMember.Where(target => target.HitPoint > 0));
+                    break;
+
+                case Rom.ActionTargetType.SELF:
+                    self.commandTargetList.Add(self);
+                    break;
+
+                case Rom.ActionTargetType.OTHERS:
+                    self.commandTargetList.AddRange(self.FriendPartyRefMember.Where(target => target != self));
+                    break;
+            }
+
+            // 上書きの結果、対象がいなくなった場合は何もしない
+            // 
+            if (self.commandTargetList.Count == 0)
+            {
+                self.selectedBattleCommandType = BattleCommandType.Nothing;
+            }
+        }
+
+        private BattleCharacterBase TargetSelectWithHateRate(IEnumerable<BattleCharacterBase> origList, BattleCharacterBase data = null)
         {
             var hateRateSumList = new List<int>();
             var list = origList;
 
             // 賢いAIのときは対象から反射状態のキャストを抜く
             // When using smart AI, remove casting in a reflective state from the target.
-            if (data != null && data.selectedSkill != null && data.monster.aiPattern != Rom.AIPattern.NORMAL)
+            if (data != null && data.selectedSkill != null && data.GetSource().aiPattern != Rom.AIPattern.NORMAL)
             {
                 list = origList.Where(x => x.GetReflectionParam(data.selectedSkill, false) == null).ToArray();
             }
@@ -5506,7 +5810,7 @@ namespace Yukar.Battle
                 }
             }
 
-            switch (data?.monster.aiPattern ?? Rom.AIPattern.NORMAL)
+            switch (data?.GetSource().aiPattern ?? Rom.AIPattern.NORMAL)
             {
                 case Rom.AIPattern.NORMAL:
                 case Rom.AIPattern.CLEVER:
@@ -5532,68 +5836,357 @@ namespace Yukar.Battle
             return null;
         }
 
-        private bool checkCondition(Rom.ActionInfo act, BattleEnemyData monsterData, int hitPointRate, int magicPointRate, bool isCounter)
+        private bool checkCondition(Rom.ActionInfo act, BattleCharacterBase monsterData, int hitPointRate, int magicPointRate, bool isCounter)
         {
-            bool ok = true;
-            bool containsCounter = false;
-            foreach (var cond in act.conditions)
-            {
-                if (!ok)
-                    break;
+            // 反撃は条件リスト外の別枠フラグ。反撃タイミングと一致しなければ不成立。
+            // 
+            if (act.counter != isCounter)
+                return false;
 
+            return evaluateBattleAiConditions(act.conditionList, monsterData, hitPointRate, magicPointRate);
+        }
+
+        /// <summary>
+        /// バトル行動AIの条件リスト(Event.Condition)を評価する（行動条件・AIシート実行条件で共通利用）。
+        /// 
+        /// バトル固有条件(HP/MP/レベル/ターン/状態/消費ステータス)は行動キャストのランタイム状態で評価し、
+        /// 
+        /// 汎用条件(スイッチ/変数/文字列変数/OR等)はマップイベントと同じ経路(グローバルスコープ)で評価する。
+        /// 
+        /// </summary>
+        private bool evaluateBattleAiConditions(IEnumerable<Rom.Event.Condition> conditions, BattleCharacterBase monsterData, int hitPointRate, int magicPointRate)
+        {
+            // 汎用条件(スイッチ/変数/文字列変数/ORなど)はまとめてマップイベントと同じ経路で評価する。
+            // 
+            var genericConds = new List<Rom.Event.Condition>();
+
+            foreach (var cond in conditions)
+            {
                 switch (cond.type)
                 {
-                    case Rom.ActionConditionType.HP:
-                        if (hitPointRate < cond.min || cond.max < hitPointRate)
-                            ok = false;
-                        break;
-                    case Rom.ActionConditionType.MP:
-                        if (magicPointRate < cond.min || cond.max < magicPointRate)
-                            ok = false;
-                        break;
-                    case Rom.ActionConditionType.AVRAGE_LEVEL:
-                        var average = playerData.Average(x => x.player.level);
-                        if (average < cond.min || cond.max < average)
-                            ok = false;
-                        break;
-                    case Rom.ActionConditionType.TURN:
-                        if (totalTurn < cond.min || cond.max < totalTurn)
-                            ok = false;
-                        break;
-                    case Rom.ActionConditionType.STATE:
-                        if (!monsterData.conditionInfoDic.ContainsKey(cond.refByConiditon))
-                            ok = false;
-                        break;
-                    case Rom.ActionConditionType.SWITCH:
-                        if (!owner.data.system.GetSwitch(cond.option, Guid.Empty, false))
-                            ok = false;
-                        break;
-                    case Rom.ActionConditionType.COUNTER:
-                        containsCounter = true;
-                        break;
-                    case Rom.ActionConditionType.CONSUMPTION_STATUS:
+                    case Rom.Event.Condition.Type.COND_TYPE_BATTLEAI_HP:
                         {
-                            var info = gameSettings.GetCastStatusParamInfo(cond.refByConiditon);
+                            var target = (Rom.ActionConditionTarget)(int)cond.cond;
+                            var value = (target == Rom.ActionConditionTarget.SELF)
+                                ? hitPointRate
+                                : getConsumptionStatusValueForCondition(monsterData, gameSettings.hpPercentStatusID, target);
+
+                            if (value < cond.index || cond.option < value)
+                                return false;
+                        }
+                        break;
+                    case Rom.Event.Condition.Type.COND_TYPE_BATTLEAI_MP:
+                        {
+                            var target = (Rom.ActionConditionTarget)(int)cond.cond;
+                            float value = magicPointRate;
+
+                            if (target != Rom.ActionConditionTarget.SELF)
+                            {
+                                var mpInfo = gameSettings.GetCastStatusParamInfo(gameSettings.maxMPStatusID, true);
+
+                                if (mpInfo != null)
+                                    value = getConsumptionStatusValueForCondition(monsterData, mpInfo.ConsumptionPercentId, target);
+                            }
+
+                            if (value < cond.index || cond.option < value)
+                                return false;
+                        }
+                        break;
+                    case Rom.Event.Condition.Type.COND_TYPE_BATTLEAI_LEVEL:
+                        {
+                            // 「パーティ」はプレイヤーパーティ(playerData)。自分は行動キャスト自身のレベル。
+                            // 
+                            var target = (Rom.ActionConditionTarget)(int)cond.cond;
+                            float value;
+                            switch (target)
+                            {
+                                case Rom.ActionConditionTarget.SELF:
+                                    value = getBattleCharacterLevel(monsterData);
+                                    break;
+                                case Rom.ActionConditionTarget.FRIEND_MIN:
+                                    value = playerData.Count > 0 ? playerData.Min(x => x.player.level) : 0;
+                                    break;
+                                case Rom.ActionConditionTarget.FRIEND_MAX:
+                                    value = playerData.Count > 0 ? playerData.Max(x => x.player.level) : 0;
+                                    break;
+                                default:   // FRIEND_AVERAGE(旧データ既定=パーティの平均) を含む / 
+                                    value = playerData.Count > 0 ? (float)playerData.Average(x => x.player.level) : 0;
+                                    break;
+                            }
+                            if (value < cond.index || cond.option < value)
+                                return false;
+                        }
+                        break;
+                    case Rom.Event.Condition.Type.COND_TYPE_BATTLEAI_TURN:
+                        if (totalTurn < cond.index || cond.option < totalTurn)
+                            return false;
+                        break;
+                    case Rom.Event.Condition.Type.COND_TYPE_BATTLEAI_STATE:
+                        {
+                            var target = (Rom.BattleAiStateTarget)(int)cond.cond;
+                            bool negate = cond.option != 0;    // なっていないとき / 
+                            bool has = evaluateStateCondition(monsterData, cond.refGuid, target);
+                            if (has == negate)
+                                return false;
+                        }
+                        break;
+                    case Rom.Event.Condition.Type.COND_TYPE_BATTLEAI_CONSUMPTION:
+                        {
+                            var info = gameSettings.GetCastStatusParamInfo(cond.refGuid);
 
                             if (info != null)
                             {
-                                var percent = monsterData.GetStatus(gameSettings, info.ConsumptionPercentId);
+                                var target = (Rom.ActionConditionTarget)(int)cond.cond;
+                                var percent = getConsumptionStatusValueForCondition(monsterData, info.ConsumptionPercentId, target);
 
-                                if ((percent < cond.min) || (cond.max < percent))
-                                {
-                                    ok = false;
-                                }
+                                if ((percent < cond.index) || (cond.option < percent))
+                                    return false;
                             }
-
                         }
+                        break;
+                    case Rom.Event.Condition.Type.COND_TYPE_BATTLEAI_DISTANCE:
+                        {
+                            var target = (Rom.ActionConditionTarget)(int)cond.cond;
+                            var distance = getDistanceValueForCondition(monsterData, target);
+
+                            if (distance < cond.index || cond.option < distance)
+                                return false;
+                        }
+                        break;
+                    case Rom.Event.Condition.Type.COND_TYPE_BATTLEAI_EQUIPMENT:
+                        {
+                            bool negate = cond.option != 0;    // 装備していないとき / 
+                            bool equipped = isEquipmentEquipped(monsterData, cond.refGuid);
+                            if (equipped == negate)
+                                return false;
+                        }
+                        break;
+                    case Rom.Event.Condition.Type.COND_TYPE_BATTLEAI_CLASS:
+                        {
+                            bool negate = cond.option != 0;    // その職業になっていないとき / 
+                            bool matched = isClassMatched(monsterData, cond.refGuid);
+                            if (matched == negate)
+                                return false;
+                        }
+                        break;
+                    case Rom.Event.Condition.Type.COND_TYPE_BATTLEAI_STATUS:
+                        {
+                            // refGuid は guId(基本/最大値) または ConsumptionId(消費値) のどちらも指しうるが、
+                            // 
+                            // GetStatus 側で自動判別されるため getConsumptionStatusValueForCondition をそのまま流用できる
+                            // 
+                            var target = (Rom.ActionConditionTarget)(int)cond.cond;
+                            var value = getConsumptionStatusValueForCondition(monsterData, cond.refGuid, target);
+
+                            if (value < cond.index || cond.option < value)
+                                return false;
+                        }
+                        break;
+                    default:
+                        // スイッチ/変数/文字列変数/OR など汎用の条件はマップイベントと同経路で評価する
+                        // 
+                        genericConds.Add(cond);
                         break;
                 }
             }
 
-            if (containsCounter != isCounter)
-                ok = false;
+            // 汎用条件はグローバルスコープ(mapChr=null)で AISheet 実行条件と同じ経路で評価する
+            // 
+            if (genericConds.Count > 0 &&
+                !owner.mapScene.mapEngine.CheckAllCondition(null, genericConds))
+                return false;
 
-            return ok;
+            return true;
+        }
+
+        /// <summary>
+        /// 消費ステータスの行動条件で比較する値を、対象に応じて取得する
+        /// 
+        /// </summary>
+        private float getConsumptionStatusValueForCondition(BattleCharacterBase self, Guid percentId, Rom.ActionConditionTarget target)
+        {
+            if (target == Rom.ActionConditionTarget.SELF)
+            {
+                return self.GetStatus(gameSettings, percentId);
+            }
+
+            bool isFriend = (target == Rom.ActionConditionTarget.FRIEND_MIN) ||
+                            (target == Rom.ActionConditionTarget.FRIEND_MAX) ||
+                            (target == Rom.ActionConditionTarget.FRIEND_AVERAGE);
+
+            var members = isFriend ? self.FriendPartyRefMember : self.EnemyPartyRefMember;
+
+            var values = members?
+                .Where(x => x != null && !x.IsDeadCondition())
+                .Select(x => (float)x.GetStatus(gameSettings, percentId))
+                .ToList();
+
+            if (values == null || values.Count == 0)
+            {
+                // 対象が全滅している等で候補がいない場合は自分の値で代替する
+                // 
+                return self.GetStatus(gameSettings, percentId);
+            }
+
+            switch (target)
+            {
+                case Rom.ActionConditionTarget.FRIEND_MIN:
+                case Rom.ActionConditionTarget.ENEMY_MIN:
+                    return values.Min();
+                case Rom.ActionConditionTarget.FRIEND_MAX:
+                case Rom.ActionConditionTarget.ENEMY_MAX:
+                    return values.Max();
+                default:    // FRIEND_AVERAGE / ENEMY_AVERAGE
+                    return values.Average();
+            }
+        }
+
+        /// <summary>
+        /// 距離(射程)の行動条件で比較する値を、対象(味方/敵の最低・平均・最高)に応じて取得する。
+        /// 
+        /// 自分から見た各対象までの距離(射程用の位置 moveTargetPos ベース)を集計する。
+        /// 
+        /// </summary>
+        private float getDistanceValueForCondition(BattleCharacterBase self, Rom.ActionConditionTarget target)
+        {
+            bool isFriend = (target == Rom.ActionConditionTarget.FRIEND_MIN) ||
+                            (target == Rom.ActionConditionTarget.FRIEND_MAX) ||
+                            (target == Rom.ActionConditionTarget.FRIEND_AVERAGE);
+
+            var members = isFriend ? self.FriendPartyRefMember : self.EnemyPartyRefMember;
+
+            // 自分は距離0で意味を持たないので除外する
+            // 
+            var values = members?
+                .Where(x => x != null && x != self && !x.IsDeadCondition())
+                .Select(x => getBattleDistance(self, x))
+                .ToList();
+
+            if (values == null || values.Count == 0)
+            {
+                // 対象がいない場合は距離0扱い
+                // 
+                return 0;
+            }
+
+            switch (target)
+            {
+                case Rom.ActionConditionTarget.FRIEND_MIN:
+                case Rom.ActionConditionTarget.ENEMY_MIN:
+                    return values.Min();
+                case Rom.ActionConditionTarget.FRIEND_MAX:
+                case Rom.ActionConditionTarget.ENEMY_MAX:
+                    return values.Max();
+                default:    // FRIEND_AVERAGE / ENEMY_AVERAGE
+                    return values.Average();
+            }
+        }
+
+        /// <summary>
+        /// 2キャスト間の距離を、射程判定(IsHitRange)と同じ座標系(moveTargetPos)・同じ計測方式で求める。
+        /// 
+        /// Z行チェック時は行(Z)の差、それ以外は XZ 平面のユークリッド距離。
+        /// 
+        /// </summary>
+        private float getBattleDistance(BattleCharacterBase inCharacter, BattleCharacterBase inTarget)
+        {
+            if (gameSettings.checkRange == Rom.GameSettings.CheckRangeType.Line)
+            {
+                return Math.Abs(inCharacter.moveTargetPos.Z - inTarget.moveTargetPos.Z);
+            }
+
+            var diffX = inCharacter.moveTargetPos.X - inTarget.moveTargetPos.X;
+            var diffZ = inCharacter.moveTargetPos.Z - inTarget.moveTargetPos.Z;
+
+            return (float)Math.Sqrt(diffX * diffX + diffZ * diffZ);
+        }
+
+        /// <summary>
+        /// 行動条件（平均レベル）の「自分」用に、バトルキャストのレベルを取得する
+        /// 
+        /// </summary>
+        private int getBattleCharacterLevel(BattleCharacterBase chr)
+        {
+            if (chr is BattlePlayerData player)
+                return player.player.level;
+            if (chr is BattleEnemyData enemy)
+                return enemy.monsterGameData.level;
+            return 0;
+        }
+
+        /// <summary>
+        /// 行動条件（状態変化）を、対象に応じて評価する（状態にかかっているか）
+        /// 
+        /// </summary>
+        private bool evaluateStateCondition(BattleCharacterBase self, Guid stateGuid, Rom.BattleAiStateTarget target)
+        {
+            bool hasState(BattleCharacterBase chr) => chr != null && chr.conditionInfoDic.ContainsKey(stateGuid);
+
+            IEnumerable<BattleCharacterBase> aliveMembers(IEnumerable<BattleCharacterBase> members)
+            {
+                return members == null
+                    ? Enumerable.Empty<BattleCharacterBase>()
+                    : members.Where(x => x != null && !x.IsDeadCondition());
+            }
+
+            switch (target)
+            {
+                case Rom.BattleAiStateTarget.SELF:
+                    return hasState(self);
+                case Rom.BattleAiStateTarget.FRIEND_ANY:
+                    return aliveMembers(self.FriendPartyRefMember).Any(hasState);
+                case Rom.BattleAiStateTarget.FRIEND_ALL:
+                    {
+                        var members = aliveMembers(self.FriendPartyRefMember);
+                        return members.Any() && members.All(hasState);
+                    }
+                case Rom.BattleAiStateTarget.ENEMY_ANY:
+                    return aliveMembers(self.EnemyPartyRefMember).Any(hasState);
+                case Rom.BattleAiStateTarget.ENEMY_ALL:
+                    {
+                        var members = aliveMembers(self.EnemyPartyRefMember);
+                        return members.Any() && members.All(hasState);
+                    }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 行動キャスト自身が指定のアイテム(itemGuid)を装備しているかどうかを判定する。
+        /// 
+        /// 装備部位を問わず、装備中のアイテムのいずれかが一致すれば true。
+        /// 
+        /// </summary>
+        private bool isEquipmentEquipped(BattleCharacterBase self, Guid itemGuid)
+        {
+            if (itemGuid == Guid.Empty)
+                return false;
+
+            var equipments = self?.Hero?.equipments;
+            if (equipments == null)
+                return false;
+
+            foreach (var item in equipments.ItemDic.Values)
+            {
+                if (item != null && item.guId == itemGuid)
+                    return true;
+            }
+
+            return false;
+        }
+
+        // 行動キャスト自身の職業または副業が指定した職業になっているか
+        // 
+        private bool isClassMatched(BattleCharacterBase self, Guid jobGuid)
+        {
+            if (jobGuid == Guid.Empty)
+                return false;
+
+            var hero = self?.Hero;
+            if (hero == null)
+                return false;
+
+            return hero.job == jobGuid || hero.sideJob == jobGuid;
         }
 
         private void UpdateBattleState_ReadyExecuteCommand()
@@ -5603,15 +6196,15 @@ namespace Yukar.Battle
             battleEvents.clearCurrentProcessingTrigger();
 
             // 注意: エンジン本体の r74573(#29489) は commandExecuteMemberCount を battleEntryCharacters の
-            // Note: r74573(#29489) in the engine itself sets commandExecuteMemberCount to battleEntryCharacters.
+            // 
             // インデックスとして使う前提でここに範囲外ガードを追加しているが、バトルプラグインは
-            // I added an out-of-range guard here with the premise of using it as an index, but the battle plugin
+            // 
             // WaitCtbGauge で battleEntryCharacters[0] を activeCharacter へ移してから RemoveAt(0) するため、
-            // In order to move battleEntryCharacters[0] to activeCharacter in WaitCtbGauge and then RemoveAt(0),
+            // 
             // この時点で battleEntryCharacters が空(Count==0)なのは正常。ガードを入れると 0>=0 が成立し
-            // It is normal for battleEntryCharacters to be empty (Count==0) at this point.
+            // 
             // 行動が発動せず BattleFinishCheck2 へ飛んでしまうので、プラグインでは適用しない。
-            // Since the action will not be activated and the process will jump to BattleFinishCheck2, it cannot be applied in the plugin.
+            // 
             // キャストの行動の都度、位置調整する時はコメントを外す
             // Remove the comment when adjusting the position each time the cast acts
             //UpdatePosition();
@@ -5796,7 +6389,7 @@ namespace Yukar.Battle
                             GetSkillTarget(skill, out friendEffectTargets, out enemyEffectTargets);
 
                             // 消費ありの場合はコストチェックを行う
-                            // If there is consumption, check the cost
+                            // 
                             if (activeCharacter.selectedBattleCommand.type == BattleCommand.CommandType.SKILL_CN)
                             {
                                 if (!(IsQualifiedSkillCostStatus(activeCharacter, activeCharacter.selectedSkill) &&
@@ -5924,7 +6517,7 @@ namespace Yukar.Battle
             attackCount++;
 
             // 消費ありのスキル使用
-            // Use of skills with consumption
+            // 
             void UseSkillImpl(Rom.NSkill skill)
             {
                 activeCharacter.lastHitCheckResult = BattleCharacterBase.HitCheckResult.MISSED;
@@ -5964,7 +6557,7 @@ namespace Yukar.Battle
                     if (prevLastHitCheckResult == BattleCharacterBase.HitCheckResult.NONE && activeCharacter.targetCharacter.Any())
                     {
                         // スキルの対象のうち、ダメージテキストでミスになっていないキャラクターがいるかどうかで判定
-                        // Determined by whether there are any characters targeted by the skill who have not made a mistake in the damage text.
+                        // 
                         if (activeCharacter.targetCharacter.All(x => damageTextList.Exists(y => y.targetCharacter == x && y.type == BattleDamageTextInfo.TextType.Miss)))
                         {
                             activeCharacter.lastHitCheckResult = BattleCharacterBase.HitCheckResult.MISSED;
@@ -6082,7 +6675,7 @@ namespace Yukar.Battle
                         if (activeCharacter.selectedBattleCommand.type == BattleCommand.CommandType.SKILL_CN)
                         {
                             // 消費ありの場合はコストチェックを行う
-                            // If there is consumption, check the cost
+                            // 
                             UseSkillImpl(skill);
                             break;
                         }
@@ -6099,7 +6692,7 @@ namespace Yukar.Battle
                             out friendEffectedCharacters, out enemyEffectedCharacters, out reflections, true);
 
                         // イベントにはミスでも選んだインデックスを代入する
-                        // Assign the selected index to the event even if you make a mistake
+                        // 
                         activeCharacter.targetCharacter = GetSkillTargetUnion(skill, friendEffectTargets, enemyEffectTargets).Union(reflections.Select(x => x.target)).ToArray();
                         battleEvents.setLastSkillTargetIndex(activeCharacter.targetCharacter);
 
@@ -6651,7 +7244,7 @@ namespace Yukar.Battle
 
         private void UpdateBattleState_DisplayStatusMessage()
         {
-            if (battleStateFrameCount > 30)
+            if (battleStateFrameCount > gameSettings.BattleMessageDisplayTime * 60)
             {
                 battleViewer.CloseWindow();
 
@@ -6661,10 +7254,11 @@ namespace Yukar.Battle
 
         private void UpdateBattleState_DisplayStatusDamage()
         {
-            bool isEndPlayerStatusUpdate = playerData.Select(player => UpdateBattleStatusData(player)).All(isUpdated => isUpdated == false);
-            isEndPlayerStatusUpdate |= enemyData.Select(enemy => UpdateBattleStatusData(enemy)).All(isUpdated => isUpdated == false);
+            bool isUpdated = false;
+            foreach (var player in playerData) { isUpdated |= UpdateBattleStatusData(player); }
+            foreach (var enemy in enemyData) { isUpdated |= UpdateBattleStatusData(enemy); }
 
-            if (!isEndPlayerStatusUpdate) statusUpdateTweener.Update();
+            bool isEndPlayerStatusUpdate = !isUpdated;
 
             if (!battleViewer.IsPlayDamageTextAnimation && isEndPlayerStatusUpdate)
             {
@@ -6688,22 +7282,22 @@ namespace Yukar.Battle
                     }
                     else
                     {
-                        message = string.Format(gameSettings.glossary.battle_wait, activeCharacter.Name);
+                        message = Common.Util.formatSafely(gameSettings.glossary.battle_wait, activeCharacter.Name);
                     }
                     break;
                 case BattleCommandType.Attack:
                 case BattleCommandType.Miss:
-                    message = string.Format(gameSettings.glossary.battle_attack, activeCharacter.Name);
+                    message = Common.Util.formatSafely(gameSettings.glossary.battle_attack, activeCharacter.Name);
                     break;
                 case BattleCommandType.Critical:
                 case BattleCommandType.ForceCritical:
-                    message = string.Format(gameSettings.glossary.battle_critical, activeCharacter.Name);
+                    message = Common.Util.formatSafely(gameSettings.glossary.battle_critical, activeCharacter.Name);
                     break;
                 case BattleCommandType.Guard:
-                    message = string.Format(gameSettings.glossary.battle_guard, activeCharacter.Name);
+                    message = Common.Util.formatSafely(gameSettings.glossary.battle_guard, activeCharacter.Name);
                     break;
                 case BattleCommandType.Charge:
-                    message = string.Format(gameSettings.glossary.battle_charge, activeCharacter.Name);
+                    message = Common.Util.formatSafely(gameSettings.glossary.battle_charge, activeCharacter.Name);
                     break;
                 case BattleCommandType.SameSkillEffect:
                     message = IsNormalAttackSkillCommand()
@@ -6719,17 +7313,17 @@ namespace Yukar.Battle
                             format = gameSettings.glossary.battle_skill;
                         }
 							
-                        message = string.Format(format, activeCharacter.Name, activeCharacter.selectedSkill.name);
+                        message = Common.Util.formatSafely(format, activeCharacter.Name, activeCharacter.selectedSkill.name);
                     }
                     break;
                 case BattleCommandType.Item:
-                    message = string.Format(gameSettings.glossary.battle_item, activeCharacter.Name, activeCharacter.selectedItem.item.name);
+                    message = Common.Util.formatSafely(gameSettings.glossary.battle_item, activeCharacter.Name, activeCharacter.selectedItem.item.name);
                     break;
                 case BattleCommandType.PlayerEscape:
                     message = gameSettings.glossary.battle_escape_command;
                     break;
                 case BattleCommandType.MonsterEscape:
-                    message = string.Format(gameSettings.glossary.battle_enemy_escape, activeCharacter.Name);
+                    message = Common.Util.formatSafely(gameSettings.glossary.battle_enemy_escape, activeCharacter.Name);
                     break;
             }
 
@@ -6753,12 +7347,20 @@ namespace Yukar.Battle
             }
 
             var shortenPresentation = HasSkillTag(GetActivationPresentationSkill(), SHORTEN_PRESENTATION_SKILL_TAG);
-            var isPresentationWaitFinished = shortenPresentation
-                ? battleStateFrameCount > 20
-                : battleStateFrameCount > 20 || battleViewer.HasNoMessageWindow() ||
-                    Input.KeyTest(Input.StateType.TRIGGER, Input.KeyStates.DECIDE, Input.GameState.MENU);
+            if (shortenPresentation)
+            {
+                // 短縮タグは従来どおり20フレーム後にカメラ終了を待たず実行する。
+                // The shorten tag keeps its existing fixed 20-frame delay and bypasses the camera wait.
+                if (battleStateFrameCount > 20 && isReadyActor())
+                {
+                    ChangeBattleState(BattleState.ExecuteBattleCommand);
+                }
+                return;
+            }
 
-            if (isPresentationWaitFinished && (shortenPresentation || isReady3DCamera()) && isReadyActor())
+            // メッセージ表示時間の確保は CloseWindow 直前（DisplayDamageText 内）で行うので、ここでは即座にアクションに入る
+            // 
+            if (isReady3DCamera() && isReadyActor())
             {
                 ChangeBattleState(BattleState.ExecuteBattleCommand);
             }
@@ -7124,7 +7726,7 @@ namespace Yukar.Battle
 
                 if (activeCharacter.selectedBattleCommandType == BattleCommandType.Skill && activeCharacter.targetCharacter == null)
                 {
-                    battleViewer.SetDisplayMessage(string.Format(gameSettings.glossary.battle_skill_failed, activeCharacter.skillFailCauses));
+                    battleViewer.SetDisplayMessage(Common.Util.formatSafely(gameSettings.glossary.battle_skill_failed, activeCharacter.skillFailCauses));
                 }
 
                 if (activeCharacter.targetCharacter != null)
@@ -7158,8 +7760,6 @@ namespace Yukar.Battle
                 {
                     SetNextBattleStatus(enemy);
                 }
-
-                statusUpdateTweener.Begin(0, 1.0f, 30);
 
                 ChangeBattleState(BattleState.DisplayDamageText);
             }
@@ -7239,11 +7839,6 @@ namespace Yukar.Battle
 				isUpdated |= UpdateBattleStatusData(enemy);
 			}
 
-			if (isUpdated)
-			{
-				statusUpdateTweener.Update();
-			}
-
             return isUpdated;
 		}
 
@@ -7275,6 +7870,15 @@ namespace Yukar.Battle
 
                 if (complete)
                 {
+                    // メッセージウィンドウを閉じる前に、最低表示時間が満たされるまで進行を止める
+                    // 
+                    if (!string.IsNullOrEmpty(battleViewer.displayMessageText) &&
+                        battleViewer.displayMessageFrameCount < gameSettings.BattleMessageDisplayTime * 60 &&
+                        !Input.KeyTest(Input.StateType.TRIGGER, Input.KeyStates.DECIDE, Input.GameState.MENU))
+                    {
+                        return;
+                    }
+
                     // 通常は状態変化付与のメッセージに移行する
                     // Normally, the message changes to a status change message.
                     var nextBattleState = BattleState.SetConditionMessageText;
@@ -7390,7 +7994,7 @@ namespace Yukar.Battle
 
         private void UpdateBattleState_DisplayConditionMessageText()
         {
-            if ((battleStateFrameCount > 30 || Input.KeyTest(Input.StateType.TRIGGER, Input.KeyStates.DECIDE, Input.GameState.MENU)) && isReady3DCamera() && isReadyActor())
+            if ((battleStateFrameCount > gameSettings.BattleMessageDisplayTime * 60 || Input.KeyTest(Input.StateType.TRIGGER, Input.KeyStates.DECIDE, Input.GameState.MENU)) && isReady3DCamera() && isReadyActor())
             {
                 ChangeBattleState(BattleState.SetConditionMessageText);
             }
@@ -7425,7 +8029,7 @@ namespace Yukar.Battle
         private void UpdateBattleState_DisplayCommandRecoveryStatus()
         {
             if (string.IsNullOrEmpty(battleViewer.displayMessageText) ||
-                battleStateFrameCount >= 30 || Input.KeyTest(Input.StateType.TRIGGER, Input.KeyStates.DECIDE, Input.GameState.MENU))
+                battleStateFrameCount >= gameSettings.BattleMessageDisplayTime * 60 || Input.KeyTest(Input.StateType.TRIGGER, Input.KeyStates.DECIDE, Input.GameState.MENU))
             {
                 recoveryStatusInfo.RemoveAt(0);
 
@@ -7465,7 +8069,7 @@ namespace Yukar.Battle
             {
                 ChangeBattleState(nextBattleState);
             }
-            else if (battleStateFrameCount >= 30)
+            else if (battleStateFrameCount >= gameSettings.BattleMessageDisplayTime * 60)
             {
                 battleEvents.setBattleResult(battleResult);
                 ChangeBattleState(BattleState.StartBattleFinishEvent);
@@ -7681,8 +8285,6 @@ namespace Yukar.Battle
                 {
                     battleViewer.SetDamageTextInfo(damageTextList);
                     battleViewer.SetupDamageTextAnimation();
-
-                    statusUpdateTweener.Begin(0, 1.0f, 30);
 
                     if (owner.debugSettings.battleHpAndMpMax && activeCharacter is BattlePlayerData)
                     {
@@ -8021,7 +8623,7 @@ namespace Yukar.Battle
                 ((BattleViewer3D)battleViewer).Hide();
 
                 // 敵パーティ専用カメラ・バトルイベントを標準に戻す
-                // Enemy party exclusive camera/battle event returned to standard
+                // 
                 currentEnemyParty = null;
 
                 ChangeBattleState(BattleState.FinishFadeIn);
@@ -8120,7 +8722,8 @@ namespace Yukar.Battle
 #if false
                 return bv3d.getCurrentCameraTag() != BattleCameraController.TAG_FORCE_WAIT;
 #else
-                return !bv3d.camManager.isPlayAnim || bv3d.camManager.isWaitCameraPlaying || bv3d.camManager.isSkillCameraPlaying(true);
+                bool isUserBattleCamera = bv3d.camManager.ntpCamera?.IsUserBattleCamera ?? false;
+                return !bv3d.camManager.isPlayAnim || bv3d.camManager.isWaitCameraPlaying || bv3d.camManager.isSkillCameraPlaying(true) || isUserBattleCamera;
 #endif
             }
 
@@ -8345,7 +8948,7 @@ namespace Yukar.Battle
                         commandSelectPlayer.selectedSkill = skill;
 
                         // スキルがなくなっていた場合は進行できない
-                        // You cannot progress if the skill is gone.
+                        // 
                         if (skill == null)
                         {
                             battleCommandState = SelectBattleCommandState.CommandSelect;
@@ -9306,6 +9909,26 @@ namespace Yukar.Battle
 
                 gameData.hitpoint = battlePlayerData.HitPoint;
                 gameData.magicpoint = battlePlayerData.MagicPoint;
+            }
+
+            // バトルイベントによる変更を永続化する設定のステータスをマップ側に反映する
+            // 
+            if (!owner.debugSettings.battleStatusMax)
+            {
+                var persistBattleEventChangesInfoList = Catalog.sInstance.getGameSettings().CastStatusParamInfoList.Where(info => info.PersistBattleEventChanges);
+
+                if (persistBattleEventChangesInfoList.Any())
+                {
+                    foreach (var info in persistBattleEventChangesInfoList)
+                    {
+                        gameData.statusValue.SetStatus(info.guId, battlePlayerData.baseStatusValue.GetStatus(info.guId));
+                    }
+
+                    gameData.consistency();
+                    gameData.refreshEquipmentEffect();
+                    gameData.refreshConditionEffect();
+                    gameData.MapBattleStatusConsistency();
+                }
             }
 
             // まずはすべて適用する

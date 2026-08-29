@@ -23,9 +23,9 @@ namespace Yukar.Battle
 		internal Queue<MemberChangeData> MemberChangeQueue { get => memberChangeQueue; }
 
         // BTL_APPEARで生存中に消去したモンスターの元配置を UniqueID→moveTargetPos で保持する
-        // Retain the original location of monsters deleted while alive with BTL_APPEAR with UniqueID → moveTargetPos
+        // 
         // (消去後は enemyData / defeatedEnemyData のどちらにも残らないため別途保存)
-        // (After deletion, it will not remain in either enemyData / defeatedEnemyData, so save it separately)
+        // 
         Dictionary<int, Vector3> savedSlotPositions = new Dictionary<int, Vector3>();
 
 		private List<MapCharacter> dummyChrs = new List<MapCharacter>();
@@ -99,19 +99,19 @@ namespace Yukar.Battle
             this.catalog = catalog;
 
             // CALL_BATTLE_CS2 の呼び出し対象を登録する（this と battle のみをデフォルト登録）
-            // Register the call target of CALL_BATTLE_CS2 (only this and battle are registered by default)
+            // 
             battlePluginScripts.Clear();
             battlePluginScripts.Add(this);
             battlePluginScripts.Add(battle);
             this.mapEngine = mapEngine;
 
             // バトル開始時のパーティ情報を記録する（レイアウト再生成時に上書きされないよう）
-            // Record party information at the start of the battle (so it will not be overwritten when regenerating the layout)
+            // 
             originalBattleParty = playerData.ToList();
             originalReserves = GameMain.instance.data.party.Reserves.ToList();
 
             // バトルイベントを初期化する
-            // Initialize battle event
+            // 
             foreach (var guid in catalog.getGameSettings().battleEvents)
             {
                 var ev = catalog.getItemFromGuid<Event>(guid);
@@ -122,13 +122,13 @@ namespace Yukar.Battle
             }
 
             // 敵パーティ固有のバトルイベントを追加する
-            // Add enemy party-specific battle events
+            // 
             if (battle.currentEnemyParty != null)
             {
                 var rom = battle.currentEnemyParty;
 
                 // 他の敵パーティとバトルイベントを共有している場合はそちらを使う
-                // If you are sharing a battle event with another enemy party, use that.
+                // 
                 var shareTarget = catalog.getItemFromGuid<EnemyParty>(rom.ShareBattleEventsGuid);
                 if (shareTarget != null)
                     rom = shareTarget;
@@ -229,15 +229,20 @@ namespace Yukar.Battle
 
         /// <summary>
         /// バトル終了時のパーティデータをマップ用に復元する
-        /// Restore the party data at the end of the battle for the map
+        /// 
         /// </summary>
         internal void RestoreParty()
         {
+            // term() が二重に呼ばれると owner が null になっている
+            // 
+            if (owner == null)
+                return;
+
             var mapScene = owner.mapScene;
             var data = owner.data;
 
             // 終了・リセット時には menuWindow が null になるので実行しない
-            // When exiting or resetting, menuWindow will be null, so it will not be executed.
+            // 
             if (mapScene?.menuWindow == null)
                 return;
 
@@ -247,7 +252,7 @@ namespace Yukar.Battle
             if (catalog.getGameSettings().KeepBattleParty)
             {
                 // バトル時のパーティを維持する場合は差分があればマップキャラを更新する
-                // If you want to maintain the party during battle, update the map characters if there are differences.
+                // 
                 var isDifferent = false;
                 if (data.party.Members.Count != originalBattleParty.Count)
                 {
@@ -271,7 +276,7 @@ namespace Yukar.Battle
             else
             {
                 // 元のパーティデータを書き戻す
-                // Write back original party data
+                // 
                 data.party.Members.Clear();
                 data.party.Members.AddRange(originalBattleParty.Select(x => x.player));
                 data.party.ReservesRaw.Clear();
@@ -297,7 +302,7 @@ namespace Yukar.Battle
 
             foreach (var runner in mapRunnerBorrowed)
             {
-                runner.owner = owner.mapScene;
+                runner.owner = owner?.mapScene;
             }
             mapRunnerBorrowed.Clear();
 
@@ -321,7 +326,7 @@ namespace Yukar.Battle
             }
 
             // パーティデータを復元する
-            // Restore party data
+            // 
             RestoreParty();
 
             originalBattleParty = null;
@@ -401,6 +406,17 @@ namespace Yukar.Battle
                     }
                 }
             }
+
+            // バトル中のイベントキャラ(バトル用コモンイベントの dummyChrs / mapScene から借用した runner の mapChr)は
+            // 
+            // FixedUpdate 経路を通らず、歩行などの移動マクロ(tween)が進まないため「イベントを歩かせる」等が完了できず
+            // 
+            // イベントが停止してしまう。イベント実行中でも移動を完了させるよう、対象キャラの移動マクロだけを明示的に進める。
+            // 
+            foreach (var mapChr in dummyChrs)
+                mapChr.UpdateMacro();
+            foreach (var runner in mapRunnerBorrowed)
+                runner.mapChr?.UpdateMacro();
 
             // 各ウィンドウのアップデート
             // Update each window
@@ -511,6 +527,11 @@ namespace Yukar.Battle
             drawWindows();
             memberChangeUi?.Draw();
 
+            // メニューより前面のフリーレイアウト描画
+            // 
+            if (battle.battleState < BattleState.FinishFadeIn)
+                owner.DrawFreeLayouts(true, Common.Rom.LayoutProperties.LayoutNode.DrawLayers.FrontMenu);
+
             // ムービー描画
             // movie drawing
             DrawMovies(2);
@@ -537,11 +558,11 @@ namespace Yukar.Battle
             {
                 var asp = owner.getScreenAspect();
                 // 読み取り専用呼び出し：カメラアニメ時間を進めないようにする
-                // Read-only call: Prevent camera animation time from advancing
+                // 
                 // (HLVARIABLE 経由で並列イベントから呼ばれた際、cam_battle_use_skill 等の
-                // (When called from a parallel event via HLVARIABLE, cam_battle_use_skill etc.
+                // 
                 //  再生フレームが余分に進み、ダメージ表示中にカメラが地面に潜る不具合への対策)
-                // (Countermeasures for the issue where the playback frame advances extra and the camera goes into the ground while damage is being displayed)
+                // 
                 viewer.createCameraMatrix(out p, out v/*, viewer.camera.Now*/, asp, advanceTime: false);
                 GetCharacterScreenPos(chr, out x, out y, p, v, pos, offset);
             }
@@ -634,10 +655,6 @@ namespace Yukar.Battle
                 foreach (var enemy in battle.enemyData)
                 {
                     isUpdated |= battle.UpdateBattleStatusData(enemy);
-                }
-                if (isUpdated)
-                {
-                    battle.statusUpdateTweener.Update();
                 }
             }
 
@@ -921,9 +938,9 @@ namespace Yukar.Battle
             var tgt = battle.enemyData.FirstOrDefault(x => x.UniqueID == entry.idx);
 
             // BTL_APPEARで座標指定がない場合に引き継ぐ配置位置を確定する
-            // Determine the placement position to take over when no coordinates are specified with BTL_APPEAR
+            // 
             // 優先順位: (1)現在の tgt → (2)倒済み defeatedEnemyData → (3)生存中に消去済み savedSlotPositions
-            // Priority: (1) Current tgt → (2) Defeated defeatedEnemyData → (3) Deleted while alive savedSlotPositions
+            // 
             Vector3? inheritedPosition = null;
             if (tgt != null)
             {
@@ -941,7 +958,7 @@ namespace Yukar.Battle
             if (tgt != null)
             {
                 // 生存中に消去される場合は、後で同スロットへ再出現するときのために位置を保存しておく
-                // If it is deleted while it is still alive, save its position in case it reappears in the same slot later.
+                // 
                 if (!tgt.IsDeadCondition())
                     savedSlotPositions[entry.idx] = tgt.moveTargetPos;
 
@@ -963,9 +980,9 @@ namespace Yukar.Battle
             var data = battle.addEnemyData((Guid)entry.id, entry.layout, entry.idx, entry.level);
 
             // 座標指定がなく元スロットの位置情報がある場合は引き継ぐ
-            // If coordinates are not specified and there is position information of the original slot, it will be inherited.
+            // 
             // (カスタムレイアウト・デフォルトレイアウト・生存中消去いずれも対応)
-            // (Custom layout, default layout, and deletion while alive are all supported)
+            // 
             if (entry.layout == null && inheritedPosition.HasValue)
             {
                 data.pos = inheritedPosition.Value;
@@ -983,7 +1000,7 @@ namespace Yukar.Battle
             if (viewer != null)
             {
                 // entry.layout 指定あり、または元スロットの位置を引き継いだ場合はカスタム扱い
-                // If entry.layout is specified or the position of the original slot is inherited, it will be treated as a custom
+                // 
                 bool useCustomLayout = entry.layout.HasValue || inheritedPosition.HasValue;
                 var actor = viewer.AddEnemyMember(data, entry.idx, useCustomLayout);
                 actor.queueActorState(BattleActor.ActorStateType.APPEAR, "walk", (int)BattleActor.ESCAPE_MAX_COUNT);
@@ -1554,11 +1571,11 @@ namespace Yukar.Battle
             var targetAttr = curCommand.attrList[cur++];
             var guid = targetAttr.GetGuid();
             // 対象がGuid（キャスト）指定の場合、GetNumOrVariable に渡すと GuidAttr が変数扱いされ、
-            // If the target is Guid (cast) specified, GuidAttr is treated as a variable when passed to GetNumOrVariable,
+            // 
             // 名前が空の変数を読み出して生成してしまう（HP操作と並行した「空の変数への代入」の原因）。
-            // A variable with an empty name is read and generated (causing \
+            // 
             // Guid指定時は idx を使用しないため、変数参照を行わない。
-            // When specifying a Guid, idx is not used, so variables are not referenced.
+            // 
             var idx = (targetAttr is Script.GuidAttr) ? 0 : (int)ScriptRunner.GetNumOrVariable(owner, evGuid, targetAttr, false);
             Guid statusId;
             var gs = catalog.getGameSettings();
@@ -1849,8 +1866,7 @@ namespace Yukar.Battle
 						continue;
                     }
 
-					battle.statusUpdateTweener.Begin(0, 1.0f, 30);
-                    battle.SetNextBattleStatus(target);
+					battle.SetNextBattleStatus(target);
                 }
 
                 if (target != null && showDamage)
@@ -1908,7 +1924,6 @@ namespace Yukar.Battle
                 }
 
                 battle.SetNextBattleStatus(chr);
-                battle.statusUpdateTweener.Begin(0, 1.0f, 30);
             }
         }
 
@@ -2059,12 +2074,12 @@ namespace Yukar.Battle
 
 		/// <summary>
 		/// キャストIdからバトル内キャラクターか控えのリストを返す
-		/// Returns a list of in-battle characters or backups from the cast ID
+		/// 
 		/// </summary>
 		/// <param name="castId">キャストId</param>
-		/// <param name="castId">Cast ID</param>
+		/// <param name="castId"></param>
 		/// <param name="findReserves">キャストIdで控え内を探すか？</param>
-		/// <param name="findReserves">Do you want to search the waiting room by cast ID?</param>
+		/// <param name="findReserves"></param>
 		/// <returns></returns>
 		public List<BattleCharacterBase> searchBattleCastOrReserveHeroFromCastId(Guid castId, bool findReserves)
 		{
@@ -2263,7 +2278,7 @@ namespace Yukar.Battle
 				var reserve = battle.ReserveHeros.Contains(tgt.Hero);
 
 				// 変更前の「最も優先すべき状態変化モーション」を控えておく
-				// Make a note of the \
+				// 
 				var prevConditionMotion = actor?.getConditionMotion();
 
 				if (add)
@@ -2313,14 +2328,12 @@ namespace Yukar.Battle
 				}
 
                 // 最も優先すべき状態変化モーションが変化した時だけ反映する(nullへの変化=全解除を含む)。
-                // Reflects only when the most prioritized state change motion changes (including change to null = complete cancellation).
+                // 
                 // 変化のない状態変更で、イベント等で再生中のモーションを上書きしないため。
-                // This is because a motion that is being played due to an event, etc. is not overwritten by a state change that does not change.
+                // 
                 if (actor != null && actor.getConditionMotion() != prevConditionMotion)
                     actor.playWaitMotion();
 			}
-
-			battle.statusUpdateTweener.Begin(0, 1.0f, 30);
         }
 
         private void getTargetDataForMapArgs(List<BattleCharacterBase> tgts, Script.Command curCommand, ref int cur, Guid evGuid)
@@ -2430,8 +2443,6 @@ namespace Yukar.Battle
                     battle.SetNextBattleStatus(chr);
                 }
             }
-
-            battle.statusUpdateTweener.Begin(0, 1.0f, 30);
         }
 
         public override int getStatus(Script.Command.IfHeroSourceType srcTypePlus, Guid option, Common.GameData.Hero hero)
@@ -2513,7 +2524,6 @@ namespace Yukar.Battle
 
 
             battle.SetNextBattleStatus(tgt);
-            battle.statusUpdateTweener.Begin(0, 1.0f, 30);
         }
 
         public override void SetNextBattleStatus(List<BattleCharacterBase> battlePlayerDataList)
@@ -2521,7 +2531,6 @@ namespace Yukar.Battle
 			foreach (var tgt in battlePlayerDataList)
 			{
                 battle.SetNextBattleStatus(tgt);
-                battle.statusUpdateTweener.Begin(0, 1.0f, 30);
             }
         }
 
@@ -3219,6 +3228,57 @@ namespace Yukar.Battle
             if ((active?.targetCharacter?.Length ?? 0) == 0)
                 return -1;
             var target = active.targetCharacter[0];
+            if (target == null)
+                return -1;
+
+            if (target is BattlePlayerData playerData)
+            {
+                return battle?.playerData?.IndexOf(playerData) ?? -1;
+            }
+            else
+            {
+                return target.UniqueID - 1;
+            }
+        }
+
+        // ターゲット選択カーソルが表示されている(選択操作中の)状態か
+        // 
+        // 決定後は selector に選択が残るが、それは実対象確定用なので選択中とはみなさない
+        // 
+        private bool isSelectingBattleTarget()
+        {
+            switch (battle?.battleCommandState)
+            {
+                case SelectBattleCommandState.Attack_SelectTarget:
+                case SelectBattleCommandState.SkillSameEffect_SelectTarget:
+                case SelectBattleCommandState.Skill_SelectTarget:
+                case SelectBattleCommandState.Item_SelectTarget:
+                case SelectBattleCommandState.Position_SelectTarget:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        public override int getSelectTargetCamp()
+        {
+            if (!isSelectingBattleTarget())
+                return -1;
+            var selector = battle?.battleViewer?.commandTargetSelector;
+            var target = selector?.CurrentSelectCharacter;
+            if (target == null)
+                return -1;
+            return (target is BattlePlayerData) ? 0 : 1;
+        }
+
+        public override int getSelectTargetIndex()
+        {
+            if (!isSelectingBattleTarget())
+                return -1;
+            var selector = battle?.battleViewer?.commandTargetSelector;
+            var target = selector?.CurrentSelectCharacter;
+            if (target == null)
+                return -1;
             if (target is BattlePlayerData)
             {
                 return battle.playerData.IndexOf(target as BattlePlayerData);
@@ -3227,6 +3287,11 @@ namespace Yukar.Battle
             {
                 return target.UniqueID - 1;
             }
+        }
+
+        public override bool getCanEscape()
+        {
+            return battle?.CanEscape ?? true;
         }
 
         internal bool isBusy(Guid eventGuid)
@@ -3394,7 +3459,7 @@ namespace Yukar.Battle
 
         /// <summary>
         /// イベントから呼び出せるC#メソッドのサンプル
-        /// Sample C# method that can be called from an event
+        /// 
         /// </summary>
         /// <returns></returns>
         [BakinFunction(Description ="パーティの先頭のHP割合を取得 / Get the HP rate of the front of the party")]
