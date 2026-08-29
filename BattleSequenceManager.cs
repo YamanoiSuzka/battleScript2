@@ -3725,6 +3725,7 @@ namespace Yukar.Battle
                     player.ChangeEmotion(Resource.Face.FaceType.FACE_SORROW);
 
                     player.Down(catalog, battleEvents);
+                    ClearConditionsOnDown(player);
                 }
 
                 SetBattleStatusData(player);
@@ -3737,6 +3738,10 @@ namespace Yukar.Battle
                 if (enemy.HitPoint <= 0)
                 {
                     enemy.Down(catalog, battleEvents);
+                    if (ClearConditionsOnDown(enemy))
+                    {
+                        battleViewer.SetMonsterStatusEffect(enemy);
+                    }
                     enemy.selectedBattleCommandType = BattleCommandType.Nothing_Down;
                 }
             }
@@ -3792,6 +3797,38 @@ namespace Yukar.Battle
             }
 
         }
+
+        /// <summary>
+        /// Remove every condition except the condition that represents incapacitation itself.
+        /// RecoveryCondition is used so status modifiers and condition-owned effects are also released.
+        /// </summary>
+        private bool ClearConditionsOnDown(BattleCharacterBase character)
+        {
+            if (character == null || !character.IsDeadCondition())
+            {
+                return false;
+            }
+
+            var conditionsToClear = character.conditionInfoDic.Values
+                .Where(info => info.rom == null || !info.rom.IsDeadCondition)
+                .ToArray();
+
+            foreach (var conditionInfo in conditionsToClear)
+            {
+                character.RecoveryCondition(conditionInfo.condition, battleEvents,
+                    Rom.Condition.RecoveryType.Invalidate);
+            }
+
+            List<Rom.Condition> displayedConditions;
+            if (displayedSetConditionsDic.TryGetValue(character, out displayedConditions))
+            {
+                var clearedIds = new HashSet<Guid>(conditionsToClear.Select(info => info.condition));
+                displayedConditions.RemoveAll(condition => condition == null || clearedIds.Contains(condition.guId));
+            }
+
+            return conditionsToClear.Length > 0;
+        }
+
         private void SetBattleStatusData(BattleCharacterBase player, bool useConsumptionStatusValueTweener = false)
         {
             player.battleStatusData.statusValue.InitializeStatus(player.baseStatusValue);
