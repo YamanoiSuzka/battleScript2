@@ -2,7 +2,6 @@
 using Yukar.Common.GameData;
 using System.Collections.Generic;
 using System.Linq;
-using System.Management.Instrumentation;
 using System;
 using System.Windows.Forms;
 
@@ -88,11 +87,11 @@ namespace Yukar.Battle
         /// <param name="layoutManager">レイアウトマネージャー</param>
         /// <param name="layoutManager">layout manager</param>
         /// <param name="battle">バトルシーケンスマネージャー</param>
-        /// <param name="battle">battle sequence manager</param>
+        /// <param name="battle"></param>
         /// <param name="originalBattleParty">バトル開始時のパーティ（レイアウト再生成時も上書きされない）</param>
-        /// <param name="originalBattleParty">Party at the start of battle (will not be overwritten when regenerating the layout)</param>
+        /// <param name="originalBattleParty"></param>
         /// <param name="originalReserves">バトル開始時の控えメンバー（レイアウト再生成時も上書きされない）</param>
-        /// <param name="originalReserves">Reserve members at the start of the battle (will not be overwritten when regenerating the layout)</param>
+        /// <param name="originalReserves"></param>
         public LayoutStateBattleMember(LayoutManager layoutManager, BattleSequenceManager battle,
             List<BattlePlayerData> originalBattleParty, List<Hero> originalReserves)
             : base(layoutManager)
@@ -149,15 +148,15 @@ namespace Yukar.Battle
         /// Get the index of the menu container containing content about the party
         /// </summary>
         /// <returns>menuContainers リスト上のインデックス</returns>
-        /// <returns>index on menuContainers list</returns>
+        /// <returns></returns>
         private int GetPartyContainerIndex()
         {
             // GetMostMajorContent は renderObjects のインデックスを期待するため renderObjects を走査するが、
-            // GetMostMajorContent traverses renderObjects because it expects an index of renderObjects, but
+            // 
             // 戻り値は menuContainers 上のインデックスでなければならない (描画コンテナ等が混在する場合に
-            // The return value must be an index on menuContainers (if there are mixed drawing containers etc.
+            // 
             // renderObjects のインデックスでは下流の API と整合しないため)。
-            // (because the index on renderObjects is inconsistent with downstream APIs).
+            // 
             int menuContainerIndex = 0;
             for (int i = 0; i < LayoutDrawer.renderObjects.Count; i++)
             {
@@ -182,6 +181,23 @@ namespace Yukar.Battle
         {
             if (!base.Select()) return false;
 
+            // マウスで非フォーカス側のコンテナ(メンバー/控え)をクリックした場合、そちらへフォーカスとカーソルを移す
+            // 
+            // (フォーカスの無いメニューコンテナは通常マウス入力を受け付けないため、ここで明示的に処理する)
+            // 
+            if (Touch.IsDown())
+            {
+                var clickedFocusIndex = LayoutDrawer.GetFocusedMenuContainerIndex();
+                var otherContainerIndex = clickedFocusIndex == 0 ? 1 : 0;
+                var hovering = LayoutDrawer.GetHoveringIndexIgnoringFocus(otherContainerIndex);
+                if (hovering.Item2 && ChangeFocusMenuContainer())
+                {
+                    LayoutDrawer.SetSelectIndex(hovering.Item1, otherContainerIndex);
+                    UpdateSelect();
+                    Audio.PlaySound(GameMain.se.select);
+                    return true;
+                }
+            }
 
             // ページ移動の際にメンバーと控えの選択のフォーカスを変更可能にする
             // Allow the focus of member and copy selection to be changed when moving pages
@@ -227,7 +243,13 @@ namespace Yukar.Battle
                 return true;
             }
 
-            if (Input.KeyTest(Input.StateType.TRIGGER, Input.KeyStates.DASH, Input.GameState.MENU) || LayoutDrawer.HaveDecidedByTouch())
+            // DASHキーによるフォーカス切替。タッチのダブルクリック決定(HaveDecidedByTouch)はここに含めない:
+            // 
+            // 含めてしまうとダブルクリックした瞬間にフォーカスが次のコンテナへ切り替わり、直後に呼ばれる
+            // 
+            // Decide()がクリックした項目とは別の(切替後の)コンテナに対して実行されてしまう。
+            // 
+            if (Input.KeyTest(Input.StateType.TRIGGER, Input.KeyStates.DASH, Input.GameState.MENU))
             {
                 ChangeFocusMenuContainer();
                 UpdateSelect();
@@ -313,7 +335,7 @@ namespace Yukar.Battle
             }
 
             // パーティが残り一人の場合、選択中の控えが死んでいる場合は交代できない
-            // If there is only one person left in the party and the selected backup is dead, they cannot be replaced.
+            // 
             if (AliveMemberCount <= 1 &&
                 memberProperties[0].GroupInfomation != selectedMemberProperty.GroupInfomation &&
                 memberProperties[0].GroupInfomation == MemberProperty.Group.RESERVE &&
@@ -326,7 +348,7 @@ namespace Yukar.Battle
             }
 
             // パーティが残り一人の場合、死んでいるメンバーとの交代や控えへの移動はできない
-            // If there is only one person left in the party, you cannot replace a dead member or move to the standby.
+            // 
             if (AliveMemberCount <= 1 &&
                 memberProperties[0].GroupInfomation != selectedMemberProperty.GroupInfomation &&
                 memberProperties[0].GroupInfomation == MemberProperty.Group.PARTY &&
@@ -568,7 +590,7 @@ namespace Yukar.Battle
             }
             if (canAddReserve && memberProperties.Count > 0 &&
                 memberProperties[0].GroupInfomation == MemberProperty.Group.PARTY &&
-                (AliveMemberCount > 1 || (memberProperties[0].Hero?.IsDeadCondition() ?? false)))// パーティ内の生存者が残り一人の場合、死んでいるメンバーのみ控えに移動可能 / If there is only one survivor left in the party, only the dead member can be moved to the reserve.
+                (AliveMemberCount > 1 || (memberProperties[0].Hero?.IsDeadCondition() ?? false)))// パーティ内の生存者が残り一人の場合、死んでいるメンバーのみ控えに移動可能 / 
             {
                 LayoutDrawer.ConfigureMenuContainerContentProperty(BattleReserve.Count + 1, 1);
             }
@@ -601,23 +623,23 @@ namespace Yukar.Battle
             LayoutDrawer.ChangeSubMenuContainerRenderStatus(RenderStatusSub, false, 1);
 
             // 第1選択 (入れ替え元) には「グレーアウト + 常時カーソル」の RenderStatus を
-            // The first selection (replacement source) is RenderStatus of \
+            // 
             // 再適用する。AbstractLayoutState.Select() は currentPage が変化したフレームで
-            // Reapply.
+            // 
             // ChangeRenderStatus() を呼び直す (= ResetSubMenuContainerRenderStatus で
-            // Call ChangeRenderStatus() again (= with ResetSubMenuContainerRenderStatus
+            // 
             // SetSelected が設定した状態を全消しする) ため、ここで再適用しないと
-            // SetSelected completely erases the set state), so you have to reapply it here.
+            // 
             // バトルコマンド「メンバー交代」のように Show() 直後に SetSelected を呼ぶ
-            // Call SetSelected immediately after Show() like in the battle command “member change”
+            // 
             // 経路では、次フレーム最初の Select() で grey-out と常時カーソルが失われる。
-            // In the route, the first Select() of the next frame causes grey-out and the cursor is always lost.
+            // 
             // (currentPage は private int = -1 の初期値で始まるため、レイアウトを開いて
-            // (currentPage starts with the initial value of private int = -1, so when you open the layout
+            // 
             //  まだ一度も Select() が走っていない状態だと必ず page(0) と不一致になる。
-            // If Select() has never been run, there will always be a mismatch with page(0).
+            // 
             //  「初回のみ」症状はこの初期値起因。)
-            // The \
+            // 
             if (memberProperties.Count > 0)
             {
                 var selectedProp = memberProperties[0];
@@ -782,17 +804,17 @@ namespace Yukar.Battle
                     return false;
                 }
                 // 単体交代モード (バトルコマンド「メンバー交代」) では「控えに追加」の
-                // In single replacement mode (battle command \
+                // 
                 // +1スロットを出さない (ConfigureContentPropertyCallBack の canAddReserve=false) ため、
-                // +1 slot is not issued (canAddReserve=false in ConfigureContentPropertyCallBack), so
+                // 
                 // 控えが0人だと控えコンテナのサブコンテナが0個になる。
-                // If there are 0 backups, the backup container will have 0 subcontainers.
+                // 
                 // そのまま控えへフォーカス移動すると SelectingSubContainer==null となり、
-                // If you move the focus to the backup, SelectingSubContainer==null,
+                // 
                 // GoNextImpl が NG を返してコンテナ間移動も検出されず、キャンセル以外で
-                // GoNextImpl returns NG, moving between containers is not detected, and anything other than canceling
+                // 
                 // 戻ってこられなくなるので、この組み合わせの遷移自体を不可にする。
-                // Since it will not be possible to return, this combination of transitions itself will be disabled.
+                // 
                 else if (closeWhenNextCommit)
                 {
                     return false;
@@ -825,19 +847,19 @@ namespace Yukar.Battle
                     var containerIndex = GetPartyContainerIndex();
 
                     // SetSelected は Decide() からの呼び出しを前提としており、
-                    // SetSelected assumes a call from Decide() and
+                    // 
                     // 「フォーカスが対象コンテナ上にあり、カーソルが選択対象の上にある」
-                    // \
+                    // 
                     // 状態であることを暗黙的に要求している (内部の GoNextSubContainer は
-                    // state (inner GoNextSubContainer is
+                    // 
                     // カーソルを選択対象の隣へ「ずらす」処理であって、絶対位置への移動ではない)。
-                    // This is the process of \
+                    // 
                     // バトルコマンド経由の場合は Show() 直後で、フォーカスは先頭コンテナ・
-                    // If via battle command, the focus is immediately after Show() and the focus is on the first container/
+                    // 
                     // カーソルは先頭サブコンテナという初期状態なので、ここで明示的に
-                    // The cursor is in the initial state of the first subcontainer, so explicitly
+                    // 
                     // パーティコンテナへフォーカスを移し、カーソルを対象に合わせる。
-                    // Move focus to the party container and place the cursor on the target.
+                    // 
                     LayoutDrawer.ChangeFocusMenuContainer(false, containerIndex);
                     LayoutDrawer.SetSelectIndex(partyIndex, containerIndex);
 

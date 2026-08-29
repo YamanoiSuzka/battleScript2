@@ -100,6 +100,7 @@
     <Compile Include="BattleViewer3DPreview.cs" />
     <Compile Include="CommandTargetSelector.cs" />
     <Compile Include="LayoutStateBattleMember.cs" />
+    <Compile Include="LearnedSkillSelector.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="RecoveryStatusInfo.cs" />
     <Compile Include="ResultViewer.cs" />

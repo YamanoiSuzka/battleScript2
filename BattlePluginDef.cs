@@ -1,4 +1,4 @@
-﻿// @@version 2.5.1.0
+﻿// @@version 2.6.0.0
 // @@link mscorlib.dll
 // @@link System.Runtime.dll
 // @@link System.Linq.dll
@@ -18,6 +18,7 @@
 // @@include BattleViewer3D.cs
 // @@include BattleViewer3DPreview.cs
 // @@include CommandTargetSelector.cs
+// @@include LearnedSkillSelector.cs
 // @@include RecoveryStatusInfo.cs
 // @@include ResultViewer.cs
 // @@include BattleStructs.cs

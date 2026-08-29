@@ -87,7 +87,7 @@ namespace Yukar.Battle
                 }
 
                 // バトルキャストのY座標を確定させるために、一度更新処理を行う
-                // Perform the update process once to confirm the Y coordinate of the battle cast.
+                // 
                 getUpdateInfo(out var drawer, out var yangle);
                 friends[count].Update(drawer, yangle, false);
             }
@@ -101,6 +101,20 @@ namespace Yukar.Battle
         public override void setEditParam(EnemyParty.EditParam editParam)
         {
             this.editParam = editParam;
+        }
+
+        public override void ensureEnemiesInitialized()
+        {
+            if (enemyInitialized)
+                return;
+
+            InitializeEnemies();
+
+            // 敵キャストのY座標を確定させるために一度更新処理を行う（味方生成と同様）
+            // 
+            getUpdateInfo(out var drawer, out var yangle);
+            foreach (var enemy in enemies)
+                enemy?.Update(drawer, yangle, false);
         }
 
         public override void finalize()
@@ -155,13 +169,13 @@ namespace Yukar.Battle
         /// 敵キャラを読み込む
         /// load an enemy character
         /// EditParam利用タイプの実装があるとは限らないため、初回Updateで読み込むようにする
-        /// Since there is not necessarily an implementation of the EditParam usage type, it should be loaded on the first update.
+        /// 
         /// </summary>
         /// <exception cref="NotImplementedException"></exception>
         private void InitializeEnemies()
         {
             // 敵が指定されている？
-            // Has the enemy been specified?
+            // 
             if ((editParam?.EnemyCasts.Count ?? 0) > 0)
             {
                 var max = Math.Min(editParam.EnemyCasts.Count, enemies.Length);
@@ -183,7 +197,7 @@ namespace Yukar.Battle
                 }
             }
             // 指定されていない場合はランダムに敵を選ぶ
-            // If not specified, randomly select enemy
+            // 
             else
             {
                 var count = 0;
