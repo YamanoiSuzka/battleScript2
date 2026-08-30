@@ -3928,6 +3928,11 @@ namespace Yukar.Battle
                     Rom.Condition.RecoveryType.Invalidate);
             }
 
+            // HP0による一括リセットは解除ポップアップを出さない。
+            // 通常の解除や、同じフレームで付与された戦闘不能状態の通知は従来どおり表示する。
+            battleViewer?.SuppressConditionRecoveryNotifications(character,
+                conditionsToClear.Select(info => info.condition));
+
             List<Rom.Condition> displayedConditions;
             if (displayedSetConditionsDic.TryGetValue(character, out displayedConditions))
             {

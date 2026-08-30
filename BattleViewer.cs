@@ -815,6 +815,31 @@ namespace Yukar.Battle
             }
         }
 
+        /// <summary>
+        /// Treat the specified removals as the new notification baseline without hiding other
+        /// changes, such as the incapacitated condition that was added in the same frame.
+        /// </summary>
+        internal void SuppressConditionRecoveryNotifications(BattleCharacterBase target,
+            IEnumerable<Guid> conditionIds)
+        {
+            if (target == null || conditionIds == null)
+            {
+                return;
+            }
+
+            var suppressedIds = new HashSet<Guid>(conditionIds);
+            if (suppressedIds.Count == 0)
+            {
+                return;
+            }
+
+            HashSet<Guid> previous;
+            if (conditionSnapshot.TryGetValue(target, out previous))
+            {
+                previous.ExceptWith(suppressedIds);
+            }
+        }
+
         private void AddConditionChangeNotification(BattleCharacterBase target, Guid conditionId, bool added)
         {
             var condition = catalog.getItemFromGuid(conditionId) as Rom.Condition;
