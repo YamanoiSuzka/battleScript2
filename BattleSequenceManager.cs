@@ -6,7 +6,9 @@ using Microsoft.Xna.Framework;
 using SharpKmyPlatform;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Windows.Forms;
 using Yukar.Common;
 using Yukar.Common.GameData;
@@ -61,6 +63,19 @@ namespace Yukar.Battle
         // このタグを持つスキルは、使用者のスキルモーション中に残像を表示する。
         // Skills with this tag display afterimages during the user's skill motion.
         private const string AFTERIMAGE_SKILL_TAG = "残像";
+        // このタグを持つスキルは、攻撃から1秒後に状態を付与する。
+        // Skills with this tag apply conditions one second after the attack.
+        private const string DELAY_CONDITION_ASSIGN_SKILL_TAG = "攻撃後状態付与";
+        private const float DELAY_CONDITION_ASSIGN_FRAMES = 60;
+        private static readonly Regex CONDITION_ASSIGN_PERCENT_PATTERN = new Regex(
+            @"(?:^|[\r\n])\s*[<＜\[]?\s*(?:状態付与率|状態の付与率)\s*[:：=]\s*(?<percent>\d+(?:\.\d+)?)\s*[%％]?\s*[>＞\]]?",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+        private sealed class DelayedConditionAssignment
+        {
+            internal BattleCharacterBase target;
+            internal List<Rom.ConditionInfo> conditions;
+        }
         public class ExBattlePlayerData : BattlePlayerData
         {
             public ExBattlePlayerData()
@@ -169,6 +184,8 @@ namespace Yukar.Battle
         internal BattleCharacterBase activeCharacter;
         int attackCount;
         internal BattlePlayerData commandSelectPlayer;
+        private readonly List<DelayedConditionAssignment> delayedConditionAssignments = new List<DelayedConditionAssignment>();
+        private float delayedConditionAssignFrameCount;
 
         public class BattleActionEntry
         {
@@ -2268,7 +2285,7 @@ namespace Yukar.Battle
                     // status ailment recovery
                     conditionRecoveryImpl(friendEffect.RecoveryList, target, ref isEffect);
                     bool isDisplayMiss = false;
-                    conditionAssignImpl(friendEffect.AssignList, target, ref isEffect, ref isDisplayMiss);
+                    conditionAssignSkillImpl(skill, friendEffect.AssignList, target, ref isEffect, ref isDisplayMiss);
                     if (isDisplayMiss)
                     {
                         // 状態異常付与に失敗した時missと出す場合はコメントアウトを外す
@@ -2904,7 +2921,7 @@ namespace Yukar.Battle
                     // 状態異常付与に失敗した時missと出す場合は dummy のかわりに isDisplayMiss を渡す
                     // Pass isDisplayMiss instead of dummy if you want to display a miss when you fail to apply a status ailment
                     bool dummy = false;
-                    conditionAssignImpl(enemyEffect.AssignList, target, ref isEffect, ref dummy);
+                    conditionAssignSkillImpl(skill, enemyEffect.AssignList, target, ref isEffect, ref dummy);
 
 					// パラメータ変動
 					// Parameter variation
@@ -3282,6 +3299,107 @@ namespace Yukar.Battle
         public override void FixedUpdate()
         {
             (battleViewer as BattleViewer3D)?.FixedUpdate();
+        }
+
+        private void conditionAssignSkillImpl(Rom.NSkill skill, List<Rom.ConditionInfo> list, BattleCharacterBase target,
+            ref bool isEffect, ref bool isDisplayMiss)
+        {
+            var assignList = FilterSkillConditionAssignments(skill, list, ref isDisplayMiss);
+
+            if (HasSkillTag(skill, DELAY_CONDITION_ASSIGN_SKILL_TAG) && assignList.Any(info => info.value != 0))
+            {
+                if (delayedConditionAssignments.Count == 0)
+                {
+                    delayedConditionAssignFrameCount = 0;
+                }
+
+                delayedConditionAssignments.Add(new DelayedConditionAssignment()
+                {
+                    target = target,
+                    conditions = assignList,
+                });
+
+                // 状態だけを付与するスキルでも、遅延処理まで対象を保持する。
+                // Keep the target until delayed processing even when the skill only applies a condition.
+                isEffect = true;
+                return;
+            }
+
+            conditionAssignImpl(assignList, target, ref isEffect, ref isDisplayMiss);
+        }
+
+        private List<Rom.ConditionInfo> FilterSkillConditionAssignments(Rom.NSkill skill, List<Rom.ConditionInfo> list,
+            ref bool isDisplayMiss)
+        {
+            if (list == null || list.Count == 0)
+            {
+                return list ?? new List<Rom.ConditionInfo>();
+            }
+
+            var assignPercent = GetSkillConditionAssignPercent(skill);
+            if (assignPercent >= 100)
+            {
+                return list;
+            }
+
+            var result = new List<Rom.ConditionInfo>();
+            foreach (var info in list)
+            {
+                if (info.value == 0)
+                {
+                    continue;
+                }
+
+                // 複数の状態が設定されている場合は、状態ごとに独立して抽選する。
+                // Roll independently for each configured condition.
+                if (assignPercent > 0 && battleRandom.Next(10000) < assignPercent * 100)
+                {
+                    result.Add(info);
+                }
+                else
+                {
+                    isDisplayMiss = true;
+                }
+            }
+
+            return result;
+        }
+
+        private static double GetSkillConditionAssignPercent(Rom.NSkill skill)
+        {
+            if (skill == null || string.IsNullOrWhiteSpace(skill.tags))
+            {
+                return 100;
+            }
+
+            var match = CONDITION_ASSIGN_PERCENT_PATTERN.Match(skill.tags);
+            double percent;
+            if (!match.Success || !double.TryParse(match.Groups["percent"].Value, NumberStyles.Float,
+                CultureInfo.InvariantCulture, out percent))
+            {
+                return 100;
+            }
+
+            return Math.Max(0, Math.Min(100, percent));
+        }
+
+        private void ApplyDelayedSkillConditions()
+        {
+            foreach (var assignment in delayedConditionAssignments)
+            {
+                if (assignment.target == null)
+                {
+                    continue;
+                }
+
+                bool isEffect = false;
+                bool isDisplayMiss = false;
+                conditionAssignImpl(assignment.conditions, assignment.target, ref isEffect, ref isDisplayMiss);
+                assignment.target.InitializeEquipmentReAttachCondition(battleEvents);
+            }
+
+            delayedConditionAssignments.Clear();
+            delayedConditionAssignFrameCount = 0;
         }
 
         private void conditionAssignImpl(List<Rom.ConditionInfo> list, BattleCharacterBase target, ref bool isEffect, ref bool isDisplayMiss)
@@ -3968,6 +4086,11 @@ namespace Yukar.Battle
                 GameMain.setGameSpeed(owner.debugSettings.battleFastForward ? 4 : battleSpeed);
 
             battleStateFrameCount += GameMain.getRelativeParam60FPS();
+
+            if (delayedConditionAssignments.Count > 0)
+            {
+                delayedConditionAssignFrameCount += GameMain.getRelativeParam60FPS();
+            }
 
             battleEvents?.update();
 
@@ -6235,6 +6358,8 @@ namespace Yukar.Battle
             if (activeCharacter is BattlePlayerData pl) pl.forceSetCommand = false;
             activeCharacter.lastHitCheckResult = BattleCharacterBase.HitCheckResult.NONE;
             attackCount = 0;
+            delayedConditionAssignments.Clear();
+            delayedConditionAssignFrameCount = 0;
 
             // 前回の行動がカウンターだった場合は、改めて行動をセットする
             // If the previous action was a counter, set the action again
@@ -7888,6 +8013,18 @@ namespace Yukar.Battle
 
                 if (complete)
                 {
+                    // 状態付与を保留しているスキルは、攻撃から最低1秒経過し、攻撃演出が終わってから付与する。
+                    // Apply queued conditions after at least one second has elapsed and the attack presentation has finished.
+                    if (delayedConditionAssignments.Count > 0)
+                    {
+                        if (delayedConditionAssignFrameCount < DELAY_CONDITION_ASSIGN_FRAMES)
+                        {
+                            return;
+                        }
+
+                        ApplyDelayedSkillConditions();
+                    }
+
                     // メッセージウィンドウを閉じる前に、最低表示時間が満たされるまで進行を止める
                     // 
                     if (!string.IsNullOrEmpty(battleViewer.displayMessageText) &&
