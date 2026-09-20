@@ -129,16 +129,16 @@ namespace Yukar.Battle
         private bool isSkillEndMotionPaused;
 
         // 行動時の「一歩前進」中かどうかは rangePos(前進前=戻るべきホーム位置)の有無で判断する。
-        // 
+        // Whether or not it is taking a \
         // 前進中に整列処理(MovePlayerPosition)でホーム位置へ引き戻されると、後続の相対後退で
-        // 
+        // If you are pulled back to the home position during alignment processing (MovePlayerPosition) while moving forward, the player will be moved back to the home position during the subsequent relative retreat.
         // 1マス下がりすぎてしまうため、relocateForActiveStep で戻り先を更新しつつ前進ぶん前に置く。
-        // 
+        // Since it goes down one space too much, use relocateForActiveStep to update the return destination and place it in front of the forward step.
         internal bool IsSteppedForward => rangePos.HasValue;
 
         /// <summary>
         /// 「一歩前進」で進む方向のオフセット(長さ1)を返す。前進・後退に使うのと同じ向きで計算する。
-        /// 
+        /// Returns the offset (length 1) in the direction of \
         /// </summary>
         private Vector3 getForwardStepOffset()
         {
@@ -148,16 +148,16 @@ namespace Yukar.Battle
 
         /// <summary>
         /// 前進中(rangePos保持中)のアクターを整列させる。戻るべきホーム位置(rangePos)を新しい整列位置に
-        /// 
+        /// Align actors that are moving forward (holding rangePos).
         /// 更新し、見た目は前進ぶんだけ前へ置く。これにより行動終了時の相対後退で新ホームに正しく戻る。
-        /// 
+        /// Update it and move the appearance forward as much as possible.
         /// </summary>
         internal void relocateForActiveStep(float x, float z)
         {
             var ofs = getForwardStepOffset();
             rangePos = new Vector3(x, mapChr.pos.Y, z);
             // 整列移動の完了で rangePos を自動クリアさせない(前進状態は行動終了まで保持する)
-            // 
+            // RangePos is not automatically cleared upon completion of alignment movement (advance state is maintained until the end of the action)
             clearOnCompleteRangePosTweener = null;
             walk(x + ofs.X, z + ofs.Z);
         }
@@ -299,11 +299,11 @@ namespace Yukar.Battle
         private bool playMotion(string motion, MapCharacter chr, SharpKmyGfx.ModelInstance mdl)
         {
             // グラフィック種別(3Dモデル / 2D / Live2D)ごとの判定は MapCharacter.containsMotion() が
-            // 
+            // MapCharacter.containsMotion() is used to determine each graphic type (3D model / 2D / Live2D).
             // 吸収するので、ここでは種別を意識しない。見つかったら普通に再生し、
-            // 
+            // Since it is absorbed, the type is not considered here.
             // 見つからなかったら代替モーションを順に試す。
-            // 
+            // If you can't find it, try alternative motions in order.
             while (true)
             {
                 if (chr != null)
@@ -317,7 +317,7 @@ namespace Yukar.Battle
                 else if (mdl != null && mdl.containsMotion(motion))
                 {
                     // MapCharacter を伴わないモデル単体指定
-                    // 
+                    // Single model specification without MapCharacter
                     mdl.playMotion(motion, 0.2f);
                     return true;
                 }
