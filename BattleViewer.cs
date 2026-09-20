@@ -81,7 +81,7 @@ namespace Yukar.Battle
         protected Blinker choiceWindowCursolColor;
 
         public string displayMessageText;
-        public float displayMessageFrameCount;// displayMessageText が画面に表示され続けている累計フレーム数（60FPS基準） / 
+        public float displayMessageFrameCount;// displayMessageText が画面に表示され続けている累計フレーム数（60FPS基準） / Cumulative number of frames in which displayMessageText continues to be displayed on the screen (60FPS standard)
         TweenVector2 messageWindowPosition;
 
         protected Common.Resource.Texture damageNumberImageId;
@@ -1494,14 +1494,14 @@ namespace Yukar.Battle
             if (defeatEffectDrawer == null)
             {
                 // 未登録のエフェクトの場合は追加する
-                // 
+                // Add if it is an unregistered effect
                 SetBattleEffect(ref defeatEffectDrawer, guid, target);
                 defeatEffectDrawers.Add(defeatEffectDrawer);
             }
             else
             {
                 // そうでない場合も initialize を通って最初から再生されるようにする
-                // 
+                // If not, pass initialize and play from the beginning
                 SetBattleEffect(ref defeatEffectDrawer, guid, target);
             }
 
@@ -1515,19 +1515,19 @@ namespace Yukar.Battle
             if (effectDrawer == null)
             {
                 // 未登録のエフェクトの場合は追加もしくは読み替える
-                // 
+                // If it is an unregistered effect, add or replace it.
                 battleCharacterEffectDrawerDic.TryGetValue(target, out var ed);
 
                 // 辞書は手番をまたいで残るため、TryGetValue で拾えるのは「前手番のこの対象のドローワ」。
-                // 
+                // Since the dictionary remains across turns, what you can pick up with TryGetValue is \
                 // それが他の対象と共有中(1 つのインスタンスが複数キーに入っている)だと、SetBattleEffect が
-                // 
+                // If it is shared with other targets (one instance is in multiple keys), SetBattleEffect is
                 // rom 違いとして finalize してしまい、今まさに再生中の他対象のエフェクトを破壊して不可視にする。
-                // 
+                // The difference between rom and finalize is that it destroys the effects of other objects that are currently being played and makes them invisible.
                 // 例: 敵1・敵2 が通常エフェクトを共有 → 続く敵3 のクリティカルが同一インスタンスを finalize。
-                // 
+                // Example: Enemies 1 and 2 share a normal effect → Enemy 3's subsequent critical finalizes the same instance.
                 // 共有中の場合は使い回さず null 渡しで新規インスタンスを作らせる(他キーの再生を保護する)。
-                // 
+                // If it is shared, it is not reused and a new instance is created by passing null (protecting the replay of other keys).
                 if (ed != null && battleCharacterEffectDrawerDic.Count(x => x.Value == ed) > 1)
                 {
                     ed = null;
@@ -1539,7 +1539,7 @@ namespace Yukar.Battle
             else
             {
                 // そうでない場合も initialize を通って最初から再生されるようにする
-                // 
+                // If not, pass initialize and play from the beginning
                 SetBattleEffect(ref effectDrawer, guid, target);
                 battleCharacterEffectDrawerDic[target] = effectDrawer;
             }

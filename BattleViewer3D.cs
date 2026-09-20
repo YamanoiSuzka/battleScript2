@@ -280,7 +280,7 @@ namespace Yukar.Battle
                             drawer.Hide();
 
                             // 非表示になったらマウスホバー中の項目を代入する変数を-1に戻す
-                            // 
+                            // When hidden, return the variable assigned to the item under mouse hover to -1
                             AbstractLayoutState.ResetHoveringVariable(drawer, gameMain?.data?.system);
                         }
                     }
@@ -633,7 +633,7 @@ namespace Yukar.Battle
                 internal void finalize()
                 {
                     // バトル終了でレイアウトを閉じるので、マウスホバー中の項目を代入する変数を-1に戻す
-                    // 
+                    // The layout will be closed when the battle ends, so return the variable assigned to the item under mouse hover to -1.
                     AbstractLayoutState.ResetHoveringVariable(drawer, gameMain?.data?.system);
 
                     drawer.Release();
@@ -1660,7 +1660,7 @@ namespace Yukar.Battle
 						battleCharacterEffectDrawer.draw((int)target.EffectPosition.X, (int)target.EffectPosition.Y, false);
                         var actor = searchFromActors(target);
                         // 同じエフェクトが複数のターゲットに出ている場合に、3D描画での対象数を正しくするためのカウント
-                        // 
+                        // Counting to correct the number of targets in 3D drawing when the same effect appears on multiple targets
                         var count = battleCharacterEffectDrawerDic.Count(x => effectDrawTargetMonsterList.Contains(x.Key) && x.Value == battleCharacterEffectDrawerDic[target]);
                         if (battleCharacterEffectDrawer.drawFor3D(skillSource?.mapChr, actor?.mapChr, count, rot.Y))
 							actor?.queueActorState(BattleActor.ActorStateType.DAMAGE_START);
@@ -2064,15 +2064,15 @@ namespace Yukar.Battle
             }
 
             // バトル開始時のスロット数（enemies.Count）をmaxとして使用する
-            // 
+            // Use the number of slots (enemies.Count) at the start of the battle as the max
             // total+1 では1体ずつ追加するたびにmaxが変わり配置がズレるため
-            // 
+            // With total+1, each time you add one body, the max changes and the placement shifts.
             var actor = BattleActor.GenerateEnemy(catalog, data, index, enemies.Count);
             actor.source = data;
             if (useCustomLayout)
             {
                 // BTL_APPEARで座標指定あり：指定座標を地形高さ補正して使用
-                // 
+                // Coordinates specified in BTL_APPEAR: Use specified coordinates with terrain height correction
                 Vector3 neutralPos;
                 neutralPos.X = data.pos.X;
                 neutralPos.Z = data.pos.Z;
@@ -2082,9 +2082,9 @@ namespace Yukar.Battle
             else
             {
                 // 座標指定なし：GenerateEnemy内のresetStateが enemies.Count を基準に
-                // 
+                // No coordinates specified: resetState in GenerateEnemy is based on enemies.Count
                 // 計算した位置をそのまま採用し、data.pos も同期させる
-                // 
+                // Adopt the calculated position as is and also synchronize data.pos
                 data.pos = data.moveTargetPos = actor.mapChr.pos;
             }
             enemies[index] = actor;
@@ -2300,14 +2300,14 @@ namespace Yukar.Battle
                             }
                         }
                         // 画像があるとき
-                        // 
+                        // When there is an image
                         else if(damageMissedImageId != null)
                         {
                             position.X -= damageMissedImageId.Width / 2;
                             Graphics.DrawImage(damageMissedImageId, (int)position.X, (int)position.Y);
                         }
                         // 画像がないとき
-                        // 
+                        // When there is no image
                         else
                         {
                             position.X -= Graphics.MeasureString(info.font, info.text).X / 2;
@@ -2366,7 +2366,7 @@ namespace Yukar.Battle
 
         /// <summary>
         /// 行動者（アクティブなキャスト）の座標を取得する。行動者が居ない場合はパーティの一人目にフォールバックする
-        /// 
+        /// Get the coordinates of the person acting (active cast).
         /// </summary>
         private SharpKmyMath.Vector3 getActorPos()
         {
@@ -2390,10 +2390,10 @@ namespace Yukar.Battle
 
         /// <summary>
         /// 行動先ターゲットキャストの座標を取得する（複数対象の場合は中心座標）。行動先ターゲットが居ない場合は敵の一人目にフォールバックする
-        /// 
+        /// Obtain the coordinates of the action target cast (center coordinates in case of multiple targets).
         /// </summary>
         /// <param name="fallback">行動先ターゲット・敵のいずれも居ない場合に返す座標</param>
-        /// <param name="fallback"></param>
+        /// <param name="fallback">Coordinates returned when there is no target or enemy</param>
         private SharpKmyMath.Vector3 getActionTargetPos(SharpKmyMath.Vector3 fallback)
         {
             var targets = skillUser?.source?.targetCharacter;
@@ -2616,9 +2616,9 @@ namespace Yukar.Battle
                     owner.battleState <= BattleState.SortBattleActions)
                 {
                     // オートバトル(IsUseBattleAI)はコマンド選択を行わずAIが即決するため、
-                    // 
+                    // Auto battle (IsUseBattleAI) does not require command selection and the AI makes an immediate decision, so
                     // 選択中の一歩前進/後退の演技(コマンド決定→即後退に見える)を対象から除外する
-                    // 
+                    // Exclude the currently selected step forward/backward performance (command decision → looks like immediate retreat) from the target.
                     if (playerData[i] == owner.commandSelectPlayer && !playerData[i].IsUseBattleAI)
                     {
                         turnChr[i]?.setVisibility(true);
@@ -2983,9 +2983,9 @@ namespace Yukar.Battle
                             //if (actor.frontDir > 0)
                             {
                                 // スキルの「利用するカメラ」設定
-                                // 
+                                // Skill's \
                                 // Guid.Empty = 標準 / Camera.NONE_CAMERA_GUID = なし(スキップ) / それ以外 = ユーザーバトルカメラ
-                                // 
+                                // Guid.Empty = Standard / Camera.NONE_CAMERA_GUID = None (Skip) / Other = User Battle Camera
                                 var useBattleCameraGuid = self.selectedSkill?.option?.useBattleCameraGuid ?? Guid.Empty;
                                 bool skipSkillCamera = (useBattleCameraGuid == Rom.Camera.NONE_CAMERA_GUID);
 
@@ -2996,7 +2996,7 @@ namespace Yukar.Battle
                                     bool isWaitInitialize = true;
 
                                     // 指定されたユーザーバトルカメラ（見つからなければ標準のスキルカメラにフォールバック）
-                                    // 
+                                    // Specified user battle camera (fallback to standard skill camera if not found)
                                     var userCam = Rom.Camera.findUserBattleCamera(catalog, useBattleCameraGuid);
                                     if (userCam != null)
                                     {
@@ -3143,7 +3143,12 @@ namespace Yukar.Battle
                     case BattleCommandType.PlayerEscape:
                         //if (!start)
                         //{
-                        //    friends.FirstOrDefault(x => x.getActorState() != BattleActor.ActorStateType.KO)?.queueActorState(BattleActor.ActorStateType.ESCAPE_FAILED);
+                        //    // friends は BattlePlayerMax 分の固定長で、不在のメンバーの枠には null が入っている。
+                        // // friends has a fixed length equal to BattlePlayerMax, and null is placed in the frame for absent members.
+                        //    // 行動不能(麻痺等)も KO ステートなので、先頭から順に KO が続くと null の枠に到達する。
+                        // // Inability to take action (paralysis, etc.) is also a KO state, so if KO continues from the beginning, the null frame will be reached.
+                        //    friends.FirstOrDefault(x => x != null && x.getActorState() != BattleActor.ActorStateType.KO)
+                        //        ?.queueActorState(BattleActor.ActorStateType.ESCAPE_FAILED);
                         //}
                         break;
 
@@ -3386,9 +3391,9 @@ namespace Yukar.Battle
         /// <param name="asp"></param>
         /// <param name="advanceTime">
         /// true: 通常の描画パスからの呼び出し。カメラアニメ時間を1フレーム分進める。
-        /// 
+        /// true: Called from normal drawing pass.
         /// false: スクリーン座標取得等の読み取り専用呼び出し。カメラ状態を一切書き換えない。
-        /// 
+        /// false: Read-only calls such as getting screen coordinates.
         /// </param>
         internal void createCameraMatrix(out SharpKmyMath.Matrix4 p, out SharpKmyMath.Matrix4 v/*, Rom.ThirdPersonCameraSettings camera*/, float asp, bool advanceTime = true)
         {
@@ -3471,7 +3476,7 @@ namespace Yukar.Battle
                     else
                     {
                         // 読み取り専用パス：mCamLookAtTarget / campos / camManager の状態は書き換えない
-                        // 
+                        // Read-only path: Do not rewrite the state of mCamLookAtTarget / campos / camManager
                         SharpKmyMath.Vector3 dummyLookAt;
                         camManager.animationCameraMatrix(catalog, mapDrawer.mapRom, target, shakeValue, asp, farclip, out p, out v, out dummyLookAt, 0f, 0f, advanceTime: false, actionTargetPos: actionTargetPos);
                     }
@@ -3506,7 +3511,7 @@ namespace Yukar.Battle
                 else
                 {
                     // 読み取り専用パス：mCamLookAtTarget / campos は書き換えない
-                    // 
+                    // Read-only path: mCamLookAtTarget / campos will not be rewritten
                     SharpKmyMath.Vector3 dummyLookAt;
                     camManager.animationCameraMatrix(catalog, mapDrawer.mapRom, target, shakeValue, asp, farclip, out p, out v, out dummyLookAt, 0f, 0f, advanceTime: false, actionTargetPos: actionTargetPos);
                 }
