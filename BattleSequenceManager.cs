@@ -6,7 +6,9 @@ using Microsoft.Xna.Framework;
 using SharpKmyPlatform;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Windows.Forms;
 using Yukar.Common;
 using Yukar.Common.GameData;
@@ -61,14 +63,19 @@ namespace Yukar.Battle
         // このタグを持つスキルは、使用者のスキルモーション中に残像を表示する。
         // Skills with this tag display afterimages during the user's skill motion.
         private const string AFTERIMAGE_SKILL_TAG = "残像";
-        // このタグを持つスキルは、命中した対象のCTBゲージを後退させる。
-        // Skills with this tag push back the CTB gauge of affected targets.
-        private const string CTB_STUN_SKILL_TAG = "ctb_stun";
-        // このタグを持つ状態は、CTBスタンを受けた時に解除する。
-        // Conditions with this tag are removed when CTB stun is applied.
-        private const string CTB_STUN_CANCEL_CONDITION_TAG = "ctb_stun_cancel";
-        private const float CTB_STUN_GAUGE_PENALTY = 1.0f;
+        // このタグを持つスキルは、攻撃から1秒後に状態を付与する。
+        // Skills with this tag apply conditions one second after the attack.
+        private const string DELAY_CONDITION_ASSIGN_SKILL_TAG = "攻撃後状態付与";
+        private const float DELAY_CONDITION_ASSIGN_FRAMES = 60;
+        private static readonly Regex CONDITION_ASSIGN_PERCENT_PATTERN = new Regex(
+            @"(?:^|[\r\n])\s*[<＜\[]?\s*(?:状態付与率|状態の付与率)\s*[:：=]\s*(?<percent>\d+(?:\.\d+)?)\s*[%％]?\s*[>＞\]]?",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+        private sealed class DelayedConditionAssignment
+        {
+            internal BattleCharacterBase target;
+            internal List<Rom.ConditionInfo> conditions;
+        }
         public class ExBattlePlayerData : BattlePlayerData
         {
             public ExBattlePlayerData()
@@ -177,6 +184,8 @@ namespace Yukar.Battle
         internal BattleCharacterBase activeCharacter;
         int attackCount;
         internal BattlePlayerData commandSelectPlayer;
+        private readonly List<DelayedConditionAssignment> delayedConditionAssignments = new List<DelayedConditionAssignment>();
+        private float delayedConditionAssignFrameCount;
 
         public class BattleActionEntry
         {
@@ -270,7 +279,6 @@ namespace Yukar.Battle
         private string battleStartWord;
         private int totalTurn;
         private BattleCharacterBase consecutiveActionCharacter;
-        private readonly HashSet<BattleCharacterBase> ctbStunImmuneCharacters = new HashSet<BattleCharacterBase>();
         private int itemRate;
         private int moneyRate;
         private Guid waitForCommon;
@@ -348,6 +356,8 @@ namespace Yukar.Battle
         public override void BattleStart(Party party, BattleEnemyInfo[] monsters,
             Vector3[] playerLayouts, Common.Rom.Map.BattleSetting settings, bool escapeAvailable = true, bool gameoverOnLose = true, bool showMessage = true)
         {
+            ExGauge.ResetSoundCache();
+
             // エンカウントバトルの歩数リセット
             // Encounter battle step count reset
             owner.mapScene.mapEngine.genEncountStep();
@@ -957,6 +967,7 @@ namespace Yukar.Battle
             data.nextStatusData = new BattleStatusWindowDrawer.StatusData();
 
             data.SetParameters(hero, owner.debugSettings.battleHpAndMpMax, owner.debugSettings.battleStatusMax, party);
+            ExGauge.Initialize(data, catalog);
 
             data.startStatusData.statusValue.InitializeStatus(data.baseStatusValue);
             data.startStatusData.consumptionStatusValue.InitializeStatus(data.consumptionStatusValue);
@@ -1160,6 +1171,7 @@ namespace Yukar.Battle
                 }
 
                 player.SetParameters(player.player, owner.debugSettings.battleHpAndMpMax, owner.debugSettings.battleStatusMax, party);
+                ExGauge.Initialize(player, catalog);
 
                 SetBattleStatusData(player);
             }
@@ -2312,7 +2324,7 @@ namespace Yukar.Battle
                     // status ailment recovery
                     conditionRecoveryImpl(friendEffect.RecoveryList, target, ref isEffect);
                     bool isDisplayMiss = false;
-                    conditionAssignImpl(friendEffect.AssignList, target, ref isEffect, ref isDisplayMiss);
+                    conditionAssignSkillImpl(skill, friendEffect.AssignList, target, ref isEffect, ref isDisplayMiss);
                     if (isDisplayMiss)
                     {
                         // 状態異常付与に失敗した時missと出す場合はコメントアウトを外す
@@ -2749,6 +2761,8 @@ namespace Yukar.Battle
                                     if (!heal)
                                     {
                                         CheckDamageRecovery(target, effectValue);
+                                        if (effecter is BattleEnemyData && effectValue > 0)
+                                            ExGauge.Add(target, catalog, 1);
 
                                         SetCounterAction(target, effecter);
 
@@ -2868,6 +2882,8 @@ namespace Yukar.Battle
                                 target.consumptionStatusValue.SubStatus(gs.maxHPStatusID, damage);
 
                                 CheckDamageRecovery(target, damage);
+                                if (effecter is BattleEnemyData && damage > 0)
+                                    ExGauge.Add(target, catalog, 1);
 
                                 totalHitPointDamage += Math.Abs(damage);
                                 textType = BattleDamageTextInfo.TextType.Damage;
@@ -2948,7 +2964,7 @@ namespace Yukar.Battle
                     // 状態異常付与に失敗した時missと出す場合は dummy のかわりに isDisplayMiss を渡す
                     // Pass isDisplayMiss instead of dummy if you want to display a miss when you fail to apply a status ailment
                     bool dummy = false;
-                    conditionAssignImpl(enemyEffect.AssignList, target, ref isEffect, ref dummy);
+                    conditionAssignSkillImpl(skill, enemyEffect.AssignList, target, ref isEffect, ref dummy);
 
 					// パラメータ変動
 					// Parameter variation
@@ -3326,6 +3342,107 @@ namespace Yukar.Battle
         public override void FixedUpdate()
         {
             (battleViewer as BattleViewer3D)?.FixedUpdate();
+        }
+
+        private void conditionAssignSkillImpl(Rom.NSkill skill, List<Rom.ConditionInfo> list, BattleCharacterBase target,
+            ref bool isEffect, ref bool isDisplayMiss)
+        {
+            var assignList = FilterSkillConditionAssignments(skill, list, ref isDisplayMiss);
+
+            if (HasSkillTag(skill, DELAY_CONDITION_ASSIGN_SKILL_TAG) && assignList.Any(info => info.value != 0))
+            {
+                if (delayedConditionAssignments.Count == 0)
+                {
+                    delayedConditionAssignFrameCount = 0;
+                }
+
+                delayedConditionAssignments.Add(new DelayedConditionAssignment()
+                {
+                    target = target,
+                    conditions = assignList,
+                });
+
+                // 状態だけを付与するスキルでも、遅延処理まで対象を保持する。
+                // Keep the target until delayed processing even when the skill only applies a condition.
+                isEffect = true;
+                return;
+            }
+
+            conditionAssignImpl(assignList, target, ref isEffect, ref isDisplayMiss);
+        }
+
+        private List<Rom.ConditionInfo> FilterSkillConditionAssignments(Rom.NSkill skill, List<Rom.ConditionInfo> list,
+            ref bool isDisplayMiss)
+        {
+            if (list == null || list.Count == 0)
+            {
+                return list ?? new List<Rom.ConditionInfo>();
+            }
+
+            var assignPercent = GetSkillConditionAssignPercent(skill);
+            if (assignPercent >= 100)
+            {
+                return list;
+            }
+
+            var result = new List<Rom.ConditionInfo>();
+            foreach (var info in list)
+            {
+                if (info.value == 0)
+                {
+                    continue;
+                }
+
+                // 複数の状態が設定されている場合は、状態ごとに独立して抽選する。
+                // Roll independently for each configured condition.
+                if (assignPercent > 0 && battleRandom.Next(10000) < assignPercent * 100)
+                {
+                    result.Add(info);
+                }
+                else
+                {
+                    isDisplayMiss = true;
+                }
+            }
+
+            return result;
+        }
+
+        private static double GetSkillConditionAssignPercent(Rom.NSkill skill)
+        {
+            if (skill == null || string.IsNullOrWhiteSpace(skill.tags))
+            {
+                return 100;
+            }
+
+            var match = CONDITION_ASSIGN_PERCENT_PATTERN.Match(skill.tags);
+            double percent;
+            if (!match.Success || !double.TryParse(match.Groups["percent"].Value, NumberStyles.Float,
+                CultureInfo.InvariantCulture, out percent))
+            {
+                return 100;
+            }
+
+            return Math.Max(0, Math.Min(100, percent));
+        }
+
+        private void ApplyDelayedSkillConditions()
+        {
+            foreach (var assignment in delayedConditionAssignments)
+            {
+                if (assignment.target == null)
+                {
+                    continue;
+                }
+
+                bool isEffect = false;
+                bool isDisplayMiss = false;
+                conditionAssignImpl(assignment.conditions, assignment.target, ref isEffect, ref isDisplayMiss);
+                assignment.target.InitializeEquipmentReAttachCondition(battleEvents);
+            }
+
+            delayedConditionAssignments.Clear();
+            delayedConditionAssignFrameCount = 0;
         }
 
         private void conditionAssignImpl(List<Rom.ConditionInfo> list, BattleCharacterBase target, ref bool isEffect, ref bool isDisplayMiss)
@@ -3762,6 +3879,7 @@ namespace Yukar.Battle
                     player.ChangeEmotion(Resource.Face.FaceType.FACE_SORROW);
 
                     player.Down(catalog, battleEvents);
+                    ClearConditionsOnDown(player);
                 }
 
                 SetBattleStatusData(player);
@@ -3774,6 +3892,10 @@ namespace Yukar.Battle
                 if (enemy.HitPoint <= 0)
                 {
                     enemy.Down(catalog, battleEvents);
+                    if (ClearConditionsOnDown(enemy))
+                    {
+                        battleViewer.SetMonsterStatusEffect(enemy);
+                    }
                     enemy.selectedBattleCommandType = BattleCommandType.Nothing_Down;
                 }
             }
@@ -3829,6 +3951,43 @@ namespace Yukar.Battle
             }
 
         }
+
+        /// <summary>
+        /// Remove every condition except the condition that represents incapacitation itself.
+        /// RecoveryCondition is used so status modifiers and condition-owned effects are also released.
+        /// </summary>
+        private bool ClearConditionsOnDown(BattleCharacterBase character)
+        {
+            if (character == null || !character.IsDeadCondition())
+            {
+                return false;
+            }
+
+            var conditionsToClear = character.conditionInfoDic.Values
+                .Where(info => info.rom == null || !info.rom.IsDeadCondition)
+                .ToArray();
+
+            foreach (var conditionInfo in conditionsToClear)
+            {
+                character.RecoveryCondition(conditionInfo.condition, battleEvents,
+                    Rom.Condition.RecoveryType.Invalidate);
+            }
+
+            // HP0による一括リセットは解除ポップアップを出さない。
+            // 通常の解除や、同じフレームで付与された戦闘不能状態の通知は従来どおり表示する。
+            battleViewer?.SuppressConditionRecoveryNotifications(character,
+                conditionsToClear.Select(info => info.condition));
+
+            List<Rom.Condition> displayedConditions;
+            if (displayedSetConditionsDic.TryGetValue(character, out displayedConditions))
+            {
+                var clearedIds = new HashSet<Guid>(conditionsToClear.Select(info => info.condition));
+                displayedConditions.RemoveAll(condition => condition == null || clearedIds.Contains(condition.guId));
+            }
+
+            return conditionsToClear.Length > 0;
+        }
+
         private void SetBattleStatusData(BattleCharacterBase player, bool useConsumptionStatusValueTweener = false)
         {
             player.battleStatusData.statusValue.InitializeStatus(player.baseStatusValue);
@@ -3977,6 +4136,11 @@ namespace Yukar.Battle
                 GameMain.setGameSpeed(owner.debugSettings.battleFastForward ? 4 : battleSpeed);
 
             battleStateFrameCount += GameMain.getRelativeParam60FPS();
+
+            if (delayedConditionAssignments.Count > 0)
+            {
+                delayedConditionAssignFrameCount += GameMain.getRelativeParam60FPS();
+            }
 
             battleEvents?.update();
 
@@ -4482,11 +4646,6 @@ namespace Yukar.Battle
         {
             if (battleEvents.isBusy())
                 return;
-
-            // 一度行動機会を迎えたら、CTBスタン耐性を解除する。
-            // Stun immunity lasts until the target's next action opportunity.
-            if (activeCharacter != null)
-                ctbStunImmuneCharacters.Remove(activeCharacter);
 
             recoveryStatusInfo.Clear();
 
@@ -5970,8 +6129,10 @@ namespace Yukar.Battle
         /// Evaluate the battle action AI condition list (Event.Condition) (commonly used for action conditions and AI sheet execution conditions).
         /// バトル固有条件(HP/MP/レベル/ターン/状態/消費ステータス)は行動キャストのランタイム状態で評価し、
         /// Battle-specific conditions (HP/MP/level/turn/state/consumption status) are evaluated in the runtime state of the action cast,
-        /// 汎用条件(スイッチ/変数/文字列変数/OR等)はマップイベントと同じ経路(グローバルスコープ)で評価する。
-        /// General-purpose conditions (switches/variables/string variables/OR, etc.) are evaluated using the same route (global scope) as map events.
+        /// ORは内部の戦闘AI条件も評価できるよう再帰的に処理し、
+        /// OR is evaluated recursively so that its branches can contain battle-specific conditions,
+        /// その他の汎用条件(スイッチ/変数/文字列変数等)はマップイベントと同じ経路(グローバルスコープ)で評価する。
+        /// and other general-purpose conditions are evaluated using the same global-scope path as map events.
         /// </summary>
         /// <param name="context">デバッグログに出す評価元(AIシート/行動)の説明。null ならログを出さない</param>
         /// <param name="context">Explanation of the evaluation source (AI sheet/action) to be displayed in the debug log.</param>
@@ -6462,6 +6623,8 @@ namespace Yukar.Battle
             if (activeCharacter is BattlePlayerData pl) pl.forceSetCommand = false;
             activeCharacter.lastHitCheckResult = BattleCharacterBase.HitCheckResult.NONE;
             attackCount = 0;
+            delayedConditionAssignments.Clear();
+            delayedConditionAssignFrameCount = 0;
 
             // 前回の行動がカウンターだった場合は、改めて行動をセットする
             // If the previous action was a counter, set the action again
@@ -6789,11 +6952,8 @@ namespace Yukar.Battle
                     }
                     EffectSkill(activeCharacter, skill, friendEffectTargets.ToArray(), enemyEffectTargets.ToArray(), damageTextList, recoveryStatusInfo,
                         out friendEffectedCharacters, out enemyEffectedCharacters, out reflections, true);
-
-                    if (HasSkillTag(skill, CTB_STUN_SKILL_TAG))
-                    {
-                        ApplyCtbStun(friendEffectedCharacters.Concat(enemyEffectedCharacters));
-                    }
+                    if (attackCount == 1)
+                        ExGauge.Add(activeCharacter, catalog, ExGauge.SkillGain(skill));
 
                     battleEvents.setLastSkillTargetIndex(activeCharacter.targetCharacter);
 
@@ -6847,6 +7007,9 @@ namespace Yukar.Battle
                         var isMiss = activeCharacter.selectedBattleCommandType == BattleCommandType.Miss;
                         var isForceCritical = activeCharacter.selectedBattleCommandType == BattleCommandType.ForceCritical;
 
+                        if (attackCount == 1)
+                            ExGauge.Add(activeCharacter, catalog, 1);
+
                         foreach (var target in activeCharacter.targetCharacter)
                         {
                             GameMain.PushLog(DebugDialog.LogEntry.LogType.BATTLE, activeCharacter.Name,
@@ -6875,6 +7038,9 @@ namespace Yukar.Battle
                                 target.consumptionStatusValue.SubStatus(gs.maxHPStatusID, damage);
 
                                 CheckDamageRecovery(target, damage);
+
+                                if (activeCharacter is BattleEnemyData && damage > 0)
+                                    ExGauge.Add(target, catalog, 1);
 
                                 setAttributeWithWeaponDamage(target, activeCharacter.AttackCondition, activeCharacter.ElementAttack);
 
@@ -6940,6 +7106,8 @@ namespace Yukar.Battle
 
                         EffectSkill(activeCharacter, skill, friendEffectTargets.ToArray(), enemyEffectTargets.ToArray(), damageTextList, recoveryStatusInfo,
                             out friendEffectedCharacters, out enemyEffectedCharacters, out reflections, true);
+                        if (attackCount == 1)
+                            ExGauge.Add(activeCharacter, catalog, ExGauge.SkillGain(skill));
 
                         // イベントにはミスでも選んだインデックスを代入する
                         // Assign the selected index to the event even if you make a mistake
@@ -8120,6 +8288,18 @@ namespace Yukar.Battle
 
                 if (complete)
                 {
+                    // 状態付与を保留しているスキルは、攻撃から最低1秒経過し、攻撃演出が終わってから付与する。
+                    // Apply queued conditions after at least one second has elapsed and the attack presentation has finished.
+                    if (delayedConditionAssignments.Count > 0)
+                    {
+                        if (delayedConditionAssignFrameCount < DELAY_CONDITION_ASSIGN_FRAMES)
+                        {
+                            return;
+                        }
+
+                        ApplyDelayedSkillConditions();
+                    }
+
                     // メッセージウィンドウを閉じる前に、最低表示時間が満たされるまで進行を止める
                     // Stop progress until minimum display time is met before closing message window
                     if (!string.IsNullOrEmpty(battleViewer.displayMessageText) &&
@@ -8640,47 +8820,10 @@ namespace Yukar.Battle
             if (skill == null || string.IsNullOrWhiteSpace(skill.tags))
                 return false;
 
-            return HasTag(skill.tags, tag);
-        }
-
-        private static bool HasTag(string tags, string tag)
-        {
-            if (string.IsNullOrWhiteSpace(tags))
-                return false;
-
             var separators = new[] { ' ', '\t', '\r', '\n', ',', ';' };
-            return tags.Split(separators, StringSplitOptions.RemoveEmptyEntries)
+            return skill.tags.Split(separators, StringSplitOptions.RemoveEmptyEntries)
                 .Select(x => x.TrimStart('#', '＃'))
                 .Any(x => string.Equals(x, tag, StringComparison.OrdinalIgnoreCase));
-        }
-
-        private void ApplyCtbStun(IEnumerable<BattleCharacterBase> targets)
-        {
-            foreach (var target in targets.Where(x => x != null).Distinct())
-            {
-                if (target.IsDeadCondition() || ctbStunImmuneCharacters.Contains(target))
-                    continue;
-
-                if (target is ExBattlePlayerData player)
-                    player.turnGauge = Math.Max(0, player.turnGauge - CTB_STUN_GAUGE_PENALTY);
-                else if (target is ExBattleEnemyData enemy)
-                    enemy.turnGauge = Math.Max(0, enemy.turnGauge - CTB_STUN_GAUGE_PENALTY);
-                else
-                    continue;
-
-                ctbStunImmuneCharacters.Add(target);
-
-                // RecoveryConditionは辞書を変更するため、解除対象を先に配列化する。
-                // RecoveryCondition mutates the dictionary, so snapshot the targets first.
-                var conditionsToCancel = target.conditionInfoDic.Values
-                    .Where(x => x.rom != null && HasTag(x.rom.tags, CTB_STUN_CANCEL_CONDITION_TAG))
-                    .ToArray();
-
-                foreach (var conditionInfo in conditionsToCancel)
-                {
-                    target.RecoveryCondition(conditionInfo.condition, battleEvents, Rom.Condition.RecoveryType.Invalidate);
-                }
-            }
         }
 
         private void UpdateBattleState_PlayerChallengeEscape()

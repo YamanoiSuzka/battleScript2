@@ -263,6 +263,9 @@ namespace Yukar.Battle
                         {
                             UpdateImpl();
                             drawer.Show();
+                            if (usageInGame == Rom.LayoutProperties.LayoutNode.UsageInGame.BattleStatus)
+                                ExGauge.Update(drawer, gameMain.catalog,
+                                    BattleSequenceManagerBase.Get() as BattleSequenceManager, true);
                             AutoSort();
 
                             if (battleSequenceManager?.battleState == BattleState.Result 
@@ -306,6 +309,8 @@ namespace Yukar.Battle
 
                     if (forceUpdateGameContent) UpdateImpl();
                     drawer.Update();
+                    if (usageInGame == Rom.LayoutProperties.LayoutNode.UsageInGame.BattleStatus)
+                        ExGauge.Update(drawer, gameMain.catalog, BattleSequenceManagerBase.Get() as BattleSequenceManager);
 
                     if (visibility)
                     {
@@ -393,6 +398,7 @@ namespace Yukar.Battle
                 {
                     this.usageInGame = usageInGame;
                     gameMain = owner;
+                    ExGauge.Prepare(layout, catalog);
                     drawer = new LayoutDrawer(owner, catalog, layout);
                     if (usageInGame == Rom.LayoutProperties.LayoutNode.UsageInGame.BattleItem ||
                        usageInGame == Rom.LayoutProperties.LayoutNode.UsageInGame.BattleSkill)

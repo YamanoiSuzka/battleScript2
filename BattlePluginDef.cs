@@ -11,6 +11,7 @@
 // @@include BattleActor.cs
 // @@include BattleCameraController.cs
 // @@include BattleContentGetter.cs
+// @@include ExGauge.cs
 // @@include BattleDamageTextInfo.cs
 // @@include BattleEventController.cs
 // @@include BattleSequenceManager.cs

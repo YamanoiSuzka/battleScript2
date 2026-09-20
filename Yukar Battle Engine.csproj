@@ -89,6 +89,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="BattleActor.cs" />
+    <Compile Include="ExGauge.cs" />
     <Compile Include="BattleContentGetter.cs" />
     <Compile Include="BattleDamageTextInfo.cs" />
     <Compile Include="BattleEventController.cs" />

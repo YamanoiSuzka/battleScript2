@@ -114,6 +114,7 @@ namespace Yukar.Battle
         private const float ConditionNotificationFadeFrames = 12.0f;
         private const float ConditionNotificationLineHeight = 34.0f;
         private const int ConditionNotificationIconSize = 24;
+        private const string HideConditionRecoveryPopupTag = "解除時非表示";
         private readonly Dictionary<BattleCharacterBase, HashSet<Guid>> conditionSnapshot =
             new Dictionary<BattleCharacterBase, HashSet<Guid>>();
         private readonly List<ConditionChangeNotification> conditionChangeNotifications =
@@ -814,12 +815,38 @@ namespace Yukar.Battle
             }
         }
 
+        /// <summary>
+        /// Treat the specified removals as the new notification baseline without hiding other
+        /// changes, such as the incapacitated condition that was added in the same frame.
+        /// </summary>
+        internal void SuppressConditionRecoveryNotifications(BattleCharacterBase target,
+            IEnumerable<Guid> conditionIds)
+        {
+            if (target == null || conditionIds == null)
+            {
+                return;
+            }
+
+            var suppressedIds = new HashSet<Guid>(conditionIds);
+            if (suppressedIds.Count == 0)
+            {
+                return;
+            }
+
+            HashSet<Guid> previous;
+            if (conditionSnapshot.TryGetValue(target, out previous))
+            {
+                previous.ExceptWith(suppressedIds);
+            }
+        }
+
         private void AddConditionChangeNotification(BattleCharacterBase target, Guid conditionId, bool added)
         {
             var condition = catalog.getItemFromGuid(conditionId) as Rom.Condition;
             Resource.Texture iconImage;
             if (condition == null || condition.icon == null || condition.icon.guId == Guid.Empty ||
-                !conditionIconImages.TryGetValue(condition.icon.guId, out iconImage) || iconImage == null)
+                !conditionIconImages.TryGetValue(condition.icon.guId, out iconImage) || iconImage == null ||
+                (!added && HasConditionNotificationTag(condition.tags, HideConditionRecoveryPopupTag)))
             {
                 return;
             }
@@ -831,6 +858,19 @@ namespace Yukar.Battle
                 Added = added,
                 Timer = 0.0f,
             });
+        }
+
+        private static bool HasConditionNotificationTag(string tags, string requiredTag)
+        {
+            if (string.IsNullOrWhiteSpace(tags))
+            {
+                return false;
+            }
+
+            var separators = new[] { ' ', '\t', '\r', '\n', ',', ';' };
+            return tags.Split(separators, StringSplitOptions.RemoveEmptyEntries)
+                .Select(tag => tag.TrimStart('#', '＃'))
+                .Any(tag => string.Equals(tag, requiredTag, StringComparison.OrdinalIgnoreCase));
         }
 
         /// <summary>
