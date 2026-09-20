@@ -356,6 +356,8 @@ namespace Yukar.Battle
         public override void BattleStart(Party party, BattleEnemyInfo[] monsters,
             Vector3[] playerLayouts, Common.Rom.Map.BattleSetting settings, bool escapeAvailable = true, bool gameoverOnLose = true, bool showMessage = true)
         {
+            ExGauge.ResetSoundCache();
+
             // エンカウントバトルの歩数リセット
             // Encounter battle step count reset
             owner.mapScene.mapEngine.genEncountStep();
@@ -965,6 +967,7 @@ namespace Yukar.Battle
             data.nextStatusData = new BattleStatusWindowDrawer.StatusData();
 
             data.SetParameters(hero, owner.debugSettings.battleHpAndMpMax, owner.debugSettings.battleStatusMax, party);
+            ExGauge.Initialize(data, catalog);
 
             data.startStatusData.statusValue.InitializeStatus(data.baseStatusValue);
             data.startStatusData.consumptionStatusValue.InitializeStatus(data.consumptionStatusValue);
@@ -1168,6 +1171,7 @@ namespace Yukar.Battle
                 }
 
                 player.SetParameters(player.player, owner.debugSettings.battleHpAndMpMax, owner.debugSettings.battleStatusMax, party);
+                ExGauge.Initialize(player, catalog);
 
                 SetBattleStatusData(player);
             }
@@ -2722,6 +2726,8 @@ namespace Yukar.Battle
                                     if (!heal)
                                     {
                                         CheckDamageRecovery(target, effectValue);
+                                        if (effecter is BattleEnemyData && effectValue > 0)
+                                            ExGauge.Add(target, catalog, 1);
 
                                         SetCounterAction(target, effecter);
 
@@ -2841,6 +2847,8 @@ namespace Yukar.Battle
                                 target.consumptionStatusValue.SubStatus(gs.maxHPStatusID, damage);
 
                                 CheckDamageRecovery(target, damage);
+                                if (effecter is BattleEnemyData && damage > 0)
+                                    ExGauge.Add(target, catalog, 1);
 
                                 totalHitPointDamage += Math.Abs(damage);
                                 textType = BattleDamageTextInfo.TextType.Damage;
@@ -6002,7 +6010,9 @@ namespace Yukar.Battle
         /// 
         /// バトル固有条件(HP/MP/レベル/ターン/状態/消費ステータス)は行動キャストのランタイム状態で評価し、
         /// 
-        /// 汎用条件(スイッチ/変数/文字列変数/OR等)はマップイベントと同じ経路(グローバルスコープ)で評価する。
+        /// ORは内部の戦闘AI条件も評価できるよう再帰的に処理し、
+        ///
+        /// その他の汎用条件(スイッチ/変数/文字列変数等)はマップイベントと同じ経路(グローバルスコープ)で評価する。
         /// 
         /// </summary>
         private bool evaluateBattleAiConditions(IEnumerable<Rom.Event.Condition> conditions, BattleCharacterBase monsterData, int hitPointRate, int magicPointRate)
@@ -6133,8 +6143,20 @@ namespace Yukar.Battle
                                 return false;
                         }
                         break;
+                    case Rom.Event.Condition.Type.COND_TYPE_OR:
+                        {
+                            // 汎用の CheckAllCondition は戦闘AI専用条件を扱わないため、
+                            // OR の各分岐をこのメソッドで再帰的に評価する。
+                            bool matched = cond.attrList.Any(x =>
+                                x is Rom.Script.ConditionAttr condAttr &&
+                                evaluateBattleAiConditions(condAttr.condList, monsterData, hitPointRate, magicPointRate));
+
+                            if (!matched)
+                                return false;
+                        }
+                        break;
                     default:
-                        // スイッチ/変数/文字列変数/OR など汎用の条件はマップイベントと同経路で評価する
+                        // スイッチ/変数/文字列変数など汎用の条件はマップイベントと同経路で評価する
                         // 
                         genericConds.Add(cond);
                         break;
@@ -6692,6 +6714,8 @@ namespace Yukar.Battle
                     }
                     EffectSkill(activeCharacter, skill, friendEffectTargets.ToArray(), enemyEffectTargets.ToArray(), damageTextList, recoveryStatusInfo,
                         out friendEffectedCharacters, out enemyEffectedCharacters, out reflections, true);
+                    if (attackCount == 1)
+                        ExGauge.Add(activeCharacter, catalog, ExGauge.SkillGain(skill));
 
                     battleEvents.setLastSkillTargetIndex(activeCharacter.targetCharacter);
 
@@ -6745,6 +6769,9 @@ namespace Yukar.Battle
                         var isMiss = activeCharacter.selectedBattleCommandType == BattleCommandType.Miss;
                         var isForceCritical = activeCharacter.selectedBattleCommandType == BattleCommandType.ForceCritical;
 
+                        if (attackCount == 1)
+                            ExGauge.Add(activeCharacter, catalog, 1);
+
                         foreach (var target in activeCharacter.targetCharacter)
                         {
                             GameMain.PushLog(DebugDialog.LogEntry.LogType.BATTLE, activeCharacter.Name,
@@ -6773,6 +6800,9 @@ namespace Yukar.Battle
                                 target.consumptionStatusValue.SubStatus(gs.maxHPStatusID, damage);
 
                                 CheckDamageRecovery(target, damage);
+
+                                if (activeCharacter is BattleEnemyData && damage > 0)
+                                    ExGauge.Add(target, catalog, 1);
 
                                 setAttributeWithWeaponDamage(target, activeCharacter.AttackCondition, activeCharacter.ElementAttack);
 
@@ -6838,6 +6868,8 @@ namespace Yukar.Battle
 
                         EffectSkill(activeCharacter, skill, friendEffectTargets.ToArray(), enemyEffectTargets.ToArray(), damageTextList, recoveryStatusInfo,
                             out friendEffectedCharacters, out enemyEffectedCharacters, out reflections, true);
+                        if (attackCount == 1)
+                            ExGauge.Add(activeCharacter, catalog, ExGauge.SkillGain(skill));
 
                         // イベントにはミスでも選んだインデックスを代入する
                         // 
