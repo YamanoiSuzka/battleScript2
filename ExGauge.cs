@@ -97,8 +97,6 @@ namespace Yukar.Battle
         {
             if (layout.Usage != LayoutProperties.LayoutNode.UsageInGame.BattleStatus) return;
             var all = Flatten(layout.MenuSettings.items).ToList();
-            var template = all.FirstOrDefault(x => x.name == "EXバー");
-            if (template == null) return;
             var sprite = catalog.getItemFromName("EX", typeof(Yukar.Common.Resource.NSpriteSet))
                 as Yukar.Common.Resource.NSpriteSet;
             var drawMotion = sprite?.motions.FirstOrDefault(x =>
@@ -106,39 +104,48 @@ namespace Yukar.Battle
             foreach (var parent in all.Where(x => Regex.IsMatch(x.name ?? "", @"^キャスト[1-4]$")))
             {
                 int index = int.Parse(parent.name.Substring(4)) - 1;
-                var bar = parent.subItems.FirstOrDefault(x => x.name == "EXバー");
-                if (bar == null)
-                {
-                    bar = Copy(template);
-                    parent.subItems.Add(bar);
-                }
+                var bar = parent.subItems.FirstOrDefault(x =>
+                    Regex.IsMatch(x.name ?? "", @"^EXバー(?:_\d+)?$"));
+                // The layout tool owns gauge placement. Do not clone another cast's gauge.
+                if (bar == null) continue;
                 bar.sliderVariable = "\\partysp[" + index + "][31]";
                 bar.sliderMinimumValue = 0;
                 bar.sliderMaximumValue = Maximum;
                 bar.sliderInitialValue = 0;
-                if (drawMotion == null) continue;
                 for (int level = 1; level <= 3; level++)
                 {
                     string name = IconPrefix + index + ":" + level;
-                    if (parent.subItems.Any(x => x.name == name)) continue;
-                    var icon = Copy(bar);
+                    var icon = parent.subItems.FirstOrDefault(x =>
+                    {
+                        var match = Regex.Match(x.name ?? "",
+                            @"^EX到達アイコン:\d+:(?<level>[1-3])(?:_\d+)?$");
+                        return match.Success && match.Groups["level"].Value == level.ToString();
+                    });
+                    if (icon == null)
+                    {
+                        if (drawMotion == null) continue;
+                        icon = Copy(bar);
+                        icon.size = new Vector2(bar.size.X * 21f / 143f, bar.size.Y);
+                        // Centres of the three diamonds in the 143 x 21 background image.
+                        float center = level == 1 ? 38.5f : level == 2 ? 85.5f : 131.5f;
+                        icon.pos = bar.pos + new Vector2((center / 143f - 0.5f) * bar.size.X, 0);
+                        parent.subItems.Add(icon);
+                    }
                     icon.name = name;
                     icon.layoutType = MenuSettings.MenuItem.LayoutType.IMAGE_PANEL;
                     icon.displayType = MenuSettings.MenuItem.DisplayType.IMAGE;
                     // IMAGE_PANEL renders an NSpriteSet motion, not MenuItem.image.
-                    icon.animationSpriteId = sprite.guId;
-                    icon.drawAnimationMotionId = drawMotion.sprite.getGuid();
+                    if (drawMotion != null)
+                    {
+                        icon.animationSpriteId = sprite.guId;
+                        icon.drawAnimationMotionId = drawMotion.sprite.getGuid();
+                    }
                     icon.appearAnimationMotionId = Guid.Empty;
                     icon.disappearAnimationMotionId = Guid.Empty;
                     icon.decisionAnimationMotionId = Guid.Empty;
                     icon.useText = false;
                     icon.text = "";
                     icon.sliderVariable = "";
-                    icon.size = new Vector2(bar.size.X * 21f / 143f, bar.size.Y);
-                    // Centres of the three diamonds in the 143 x 21 background image.
-                    float center = level == 1 ? 38.5f : level == 2 ? 85.5f : 131.5f;
-                    icon.pos = bar.pos + new Vector2((center / 143f - 0.5f) * bar.size.X, 0);
-                    parent.subItems.Add(icon);
                 }
             }
         }
