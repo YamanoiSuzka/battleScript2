@@ -238,6 +238,7 @@ namespace Yukar.Battle
                 private AbstractRenderObject.GameContent gameContent = new AbstractRenderObject.GameContent();
                 public LayoutDrawer drawer;
                 private Rom.LayoutProperties.LayoutNode.UsageInGame usageInGame;
+                private bool isBattleResultArk;
 
                 private bool autoSort;
                 private Rom.MenuSettings.MenuItem.SortTypes sortType;
@@ -367,6 +368,57 @@ namespace Yukar.Battle
                     if (drawer == null) return;
                     drawer.ChangeResultVisible(gameContent);
                     UpdateImpl();
+                    ForceNewSkillTitlesVisible();
+                }
+
+                private void ForceNewSkillTitlesVisible()
+                {
+                    if (!isBattleResultArk)
+                        return;
+
+                    foreach (var obj in drawer.GetRenderObjects())
+                    {
+                        var item = drawer.GetMenuItem(obj);
+                        if (!string.Equals(item?.text, "NEW SKILL", StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        // A missing learned-skill name marks its parent container as hidden.
+                        // Keep the heading and its containers drawable up through the skill section.
+                        for (var current = obj; current != null; current = current.Parent)
+                        {
+                            current.AddDrawableInBattle(true);
+                            var currentItem = drawer.GetMenuItem(current);
+                            if (string.Equals(currentItem?.name, "スキル", StringComparison.Ordinal))
+                                break;
+                        }
+                    }
+                }
+
+                internal void UpdateResultItemFrames(int itemCount)
+                {
+                    if (drawer == null || !isBattleResultArk)
+                        return;
+
+                    itemCount = Math.Max(0, itemCount);
+                    foreach (var obj in drawer.GetRenderObjects())
+                    {
+                        var item = drawer.GetMenuItem(obj);
+                        if (item == null || !item.hidMyselfWhenChildrenHasEmptyText || obj.Parent == null)
+                            continue;
+
+                        var parentItem = drawer.GetMenuItem(obj.Parent);
+                        if (!string.Equals(parentItem?.name, "獲得アイテム表示", StringComparison.Ordinal))
+                            continue;
+
+                        var index = item.containerIndex;
+                        var renderContainer = obj as RenderContainer;
+                        if (renderContainer != null && renderContainer.MenuIndex >= 0)
+                            index = renderContainer.MenuIndex;
+
+                        // Child visibility flags can contain both true and false. Fix the
+                        // final drawable state from the actual number of result items.
+                        obj.EnableDrawable(index >= 0 && index < itemCount);
+                    }
                 }
 
                 internal void UpdateLearnSkill(List<Rom.NSkill> forgetSkills)
@@ -398,6 +450,9 @@ namespace Yukar.Battle
                 {
                     this.usageInGame = usageInGame;
                     gameMain = owner;
+                    isBattleResultArk =
+                        usageInGame == Rom.LayoutProperties.LayoutNode.UsageInGame.BattleResult &&
+                        string.Equals(layout.Name, "BattleResult_Ark", StringComparison.Ordinal);
                     ExGauge.Prepare(layout, catalog);
                     drawer = new LayoutDrawer(owner, catalog, layout);
                     if (usageInGame == Rom.LayoutProperties.LayoutNode.UsageInGame.BattleItem ||
@@ -1429,6 +1484,7 @@ namespace Yukar.Battle
 
                 return res;
             });
+            ui.result.UpdateResultItemFrames(itemCount);
             ui.result.Draw();
         }
 
